@@ -751,7 +751,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+Space  Complete   F5  Hover   F12  Definition"),
         Line::from(" Ctrl+T  Toggle theme  Esc     Clear selection"),
         Line::from(" Ctrl+B  Explorer      Shift+Ctrl+O  Folder"),
-        Line::from(" Ctrl+M  Manage plugins"),
+        Line::from(" Ctrl+M / Alt+M  Manage plugins"),
         Line::from(" Ctrl+Tab  Next tab    Ctrl+W  Close tab"),
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),

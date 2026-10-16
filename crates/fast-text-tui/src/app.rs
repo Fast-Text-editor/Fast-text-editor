@@ -1556,6 +1556,10 @@ impl App {
             KeyCode::Char('1') if alt => self.set_cursor_style_builtin(CursorStyle::Bar),
             KeyCode::Char('2') if alt => self.set_cursor_style_builtin(CursorStyle::Block),
             KeyCode::Char('3') if alt => self.set_cursor_style_builtin(CursorStyle::Underline),
+            // Alt+M is the terminal-independent fallback for the plugin manager:
+            // a legacy terminal reports Ctrl+M as plain Enter, so Alt+M (which
+            // arrives as an ESC-prefixed byte) always reaches us.
+            KeyCode::Char('m') if alt => self.open_plugin_manager(),
             KeyCode::F(2) => {
                 self.prompt = Prompt::SaveAs {
                     input: self
@@ -2344,6 +2348,15 @@ mod tests {
     fn ctrl_m_opens_the_plugin_manager() {
         let mut app = empty_app();
         app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL));
+        assert!(app.plugin_manager.is_open());
+    }
+
+    #[test]
+    fn alt_m_opens_the_plugin_manager() {
+        // Alt+M works in every terminal, unlike Ctrl+M which collapses to
+        // Enter on terminals without the kitty keyboard protocol.
+        let mut app = empty_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT));
         assert!(app.plugin_manager.is_open());
     }
 

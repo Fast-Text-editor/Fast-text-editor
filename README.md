@@ -75,7 +75,7 @@ instead.
 | `F12` | Go to definition | `Alt+H` | Help |
 | `Esc` | Clear selection | | |
 | `Ctrl+B` | Toggle explorer | `Ctrl+Shift+O` | Open folder |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab | `Ctrl+M` | Manage plugins |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab | `Ctrl+M` / `Alt+M` | Manage plugins |
 | `Alt+1` / `Alt+2` / `Alt+3` | Cursor bar / block / underline | `Alt+H` | Help |
 
 `Shift` + arrows extends the selection; `Ctrl` + left/right moves by word.
@@ -173,10 +173,15 @@ the current buffer and see the result in the status bar.
 Scripts can also change the terminal cursor shape with `set_cursor_style`, which
 ### The plugin manager
 
-Press **`Ctrl+M`** (or pick *Manage plugins* from the `Ctrl+P` palette) to
-open a Visual-Studio-style **plugin manager**. It lists every discovered
-plugin with its runtime, commands, keybindings, and any load error, and lets you
-turn plugins on and off without deleting anything:
+Press **`Alt+M`** (or **`Ctrl+M`**, or pick *Manage plugins* from the `Ctrl+P`
+palette) to open a Visual-Studio-style **plugin manager**. It lists every
+discovered plugin with its runtime, commands, keybindings, and any load error,
+and lets you turn plugins on and off without deleting anything:
+
+> **Tip:** a legacy terminal sends the same byte for `Ctrl+M` and `Enter`, so
+> `Ctrl+M` only reaches the editor on terminals that speak the kitty / CSI-u
+> keyboard protocol. **`Alt+M`** works everywhere, which is why it is the
+> primary binding.
 
 | Key | Action |
 | --- | --- |
@@ -404,10 +409,10 @@ Implemented today:
 - [x] TextWrite `import` modules (built-in packages + `.tw` files) and a
       `fast-text/automator` package for timed editor automations (`Alt+R`)
 - [x] Scriptable cursor shape (bar / block / underline), built in on `Alt+1`/`2`/`3`
-- [x] Visual-Studio-style plugin manager (`Ctrl+M`): lists every plugin
+- [x] Visual-Studio-style plugin manager (`Ctrl+M` / `Alt+M`): lists every plugin
       with its commands, keybindings, and load errors, and can enable, disable,
       install, or uninstall them
-- [x] 189 automated tests (core, syntax, plugins, LSP, wasm, GUI, TUI, TextWrite)
+- [x] 190 automated tests (core, syntax, plugins, LSP, wasm, GUI, TUI, TextWrite)
 
 Planned:
 
