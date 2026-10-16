@@ -1,0 +1,18 @@
+[package]
+name = "fast-text-gui"
+description = "Native desktop frontend for Fast Text (egui/eframe)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fast-text-gui"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.29"
+egui = "0.29"
+fast-text-core = { path = "../fast-text-core" }
+fast-text-syntax = { path = "../fast-text-syntax" }

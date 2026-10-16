@@ -1,0 +1,26 @@
+# Cursor styles for Fast Text (TextWrite script).
+#
+# Switch the terminal cursor between a thin bar, a filled block, and an
+# underline. Run a command from the Ctrl+P palette, or use the keys below.
+#
+# `set_cursor_style` accepts "bar", "block", or "underline".
+
+fn cursor_bar() {
+    set_cursor_style("bar")
+}
+
+fn cursor_block() {
+    set_cursor_style("block")
+}
+
+fn cursor_underline() {
+    set_cursor_style("underline")
+}
+
+command_with_desc("TextWrite: Cursor bar", "Use a thin vertical bar cursor", "cursor_bar")
+command_with_desc("TextWrite: Cursor block", "Use a filled block cursor", "cursor_block")
+command_with_desc("TextWrite: Cursor underline", "Use an underline cursor", "cursor_underline")
+
+bind("alt+1", "TextWrite: Cursor bar")
+bind("alt+2", "TextWrite: Cursor block")
+bind("alt+3", "TextWrite: Cursor underline")

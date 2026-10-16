@@ -1,0 +1,5 @@
+# The classic hello world, in TextWrite.
+print "Hello, world!"
+
+let name = "Ada"
+print "Hello, {name}!"

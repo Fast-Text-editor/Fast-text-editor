@@ -1,0 +1,51 @@
+# TextWrite editor script for Fast Text.
+#
+# TextWrite scripts live alongside Rhai plugins in `plugins/` (or
+# `~/.config/fast-text/plugins/`). A script registers commands with `command`
+# / `command_with_desc` and optional keybindings with `bind`; press Ctrl+P to
+# list every command. See crates/textwrite/README.md for the language.
+#
+# Editor globals made available to a script: cursor, selection_start,
+# selection_end, has_selection, selected_text, line, col, doc_len, line_count,
+# file_name, and language.
+
+# --- Editing helpers -------------------------------------------------------
+
+fn duplicate_line() {
+    move_caret("line_start", false)
+    move_caret("line_end", true)
+    let current = selected_text
+    move_caret("line_end", false)
+    insert("\n" + current)
+}
+command_with_desc("TextWrite: Duplicate line", "Duplicate the current line", "duplicate_line")
+bind("ctrl+shift+alt+d", "TextWrite: Duplicate line")
+
+fn wrap_selection() {
+    if has_selection {
+        insert("\"" + selected_text + "\"")
+    } else {
+        insert("\"\"")
+        move_caret("left", false)
+    }
+}
+command_with_desc("TextWrite: Wrap in quotes", "Surround the selection with quotes", "wrap_selection")
+
+fn uppercase_selection() {
+    if has_selection {
+        let text = upper(selected_text)
+        delete_selection()
+        insert(text)
+    } else {
+        message("Select some text first")
+    }
+}
+command_with_desc("TextWrite: Uppercase selection", "Replace the selection with its uppercase form", "uppercase_selection")
+
+# --- Info ------------------------------------------------------------------
+
+fn document_stats() {
+    message("{file_name}: {line_count} lines, {doc_len} chars, {language}")
+}
+command_with_desc("TextWrite: Document stats", "Show a summary of the current buffer", "document_stats")
+bind("ctrl+shift+alt+s", "TextWrite: Document stats")

@@ -1,0 +1,26 @@
+[package]
+name = "fast-text-wasm"
+description = "WebAssembly bindings for the Fast Text engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fast-text-core = { path = "../fast-text-core" }
+fast-text-syntax = { path = "../fast-text-syntax" }
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+# This box ships an old wasm-opt that rejects bulk-memory ops; skip it.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false

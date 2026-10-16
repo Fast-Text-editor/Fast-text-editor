@@ -1,0 +1,59 @@
+# fast-text/automator — editor automation helpers for Fast Text.
+#
+# Import it in a `.tw` script or automation file:
+#
+#     import "fast-text/automator"
+#
+# Steps run in the order you call them. `pause` delays the *next* step, so a
+# script can animate the cursor or type with a rhythm. Run an automation file
+# in the editor with Alt+R.
+
+# --- Basic steps -----------------------------------------------------------
+
+# Set the cursor shape: "bar", "block", or "underline".
+fn cursor(style) {
+    set_cursor_style(style)
+}
+
+# Insert text at the cursor.
+fn type_text(text) {
+    insert(text)
+}
+
+# Pause `ms` milliseconds before the next step.
+fn pause(ms) {
+    wait(ms)
+}
+
+# Move the caret: left, right, up, down, word_left, word_right, line_start,
+# line_end, doc_start, doc_end. Pass true for `extend` to grow the selection.
+fn move(dir, extend) {
+    move_caret(dir, extend)
+}
+
+# --- Composed helpers ------------------------------------------------------
+
+# Cycle through `styles`, pausing `delay` ms after each.
+fn animate_cursor(styles, delay) {
+    for style in styles {
+        cursor(style)
+        if delay > 0 {
+            pause(delay)
+        }
+    }
+}
+
+# Run each zero-argument function in `steps`, pausing `delay` ms after each.
+fn sequence(steps, delay) {
+    for step in steps {
+        step()
+        if delay > 0 {
+            pause(delay)
+        }
+    }
+}
+
+# A ready-made cursor demo: bar -> block -> underline.
+fn cursor_demo(delay) {
+    animate_cursor(["bar", "block", "underline"], delay)
+}

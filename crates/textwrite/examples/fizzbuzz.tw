@@ -1,0 +1,12 @@
+# FizzBuzz, written the English way.
+for n in range(1, 16) {
+    if n % 15 is 0 {
+        print "FizzBuzz"
+    } else if n % 3 is 0 {
+        print "Fizz"
+    } else if n % 5 is 0 {
+        print "Buzz"
+    } else {
+        print n
+    }
+}

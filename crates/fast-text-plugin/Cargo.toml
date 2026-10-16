@@ -1,0 +1,11 @@
+[package]
+name = "fast-text-plugin"
+description = "Scriptable plugin system for Fast Text, powered by Rhai."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+rhai = "1.26"

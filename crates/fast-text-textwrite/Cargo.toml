@@ -1,0 +1,16 @@
+[package]
+name = "fast-text-textwrite"
+description = "Embeds the TextWrite scripting language into the Fast Text editor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "fast_text_textwrite"
+path = "src/lib.rs"
+
+[dependencies]
+fast-text-plugin = { path = "../fast-text-plugin" }
+textwrite = { path = "../textwrite" }

@@ -1,0 +1,14 @@
+[package]
+name = "fast-text-core"
+description = "The Fast Text editor engine: rope buffer, edits, undo/redo, selections, search."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+ropey.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+thiserror.workspace = true

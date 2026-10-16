@@ -1,0 +1,16 @@
+# Cursor animation demo.
+#
+# Run it from the editor with Alt+R, then enter:
+#
+#     automations/cursor-demo.tw
+#
+# Fast Text compiles the file first, then plays it back over time so the
+# terminal cursor cycles bar -> block -> underline and back to bar.
+
+import "fast-text/automator"
+
+message("Animating the cursor: bar, block, underline")
+
+cursor_demo(250)
+
+cursor("bar")

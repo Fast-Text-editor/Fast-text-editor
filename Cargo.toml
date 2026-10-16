@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fast-text-core",
+    "crates/fast-text-syntax",
+    "crates/fast-text-plugin",
+    "crates/fast-text-lsp",
+    "crates/fast-text-wasm",
+    "crates/fast-text-gui",
+    "crates/fast-text-tui",
+    "crates/fast-text-textwrite",
+    "crates/textwrite",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Fast Text contributors"]
+repository = "https://example.com/fast-text"
+
+[workspace.dependencies]
+fast-text-core = { path = "crates/fast-text-core" }
+fast-text-syntax = { path = "crates/fast-text-syntax" }
+
+ropey = "1.6"
+unicode-segmentation = "1.11"
+unicode-width = "0.1"
+anyhow = "1"
+thiserror = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

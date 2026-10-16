@@ -1,0 +1,24 @@
+[package]
+name = "textwrite"
+description = "TextWrite: the Fast Text scripting language (lexer, parser, interpreter, REPL)."
+default-run = "textwrite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+autobins = false
+
+[lib]
+name = "textwrite"
+path = "src/lib.rs"
+
+[[bin]]
+name = "textwrite"
+path = "src/main.rs"
+
+[[bin]]
+name = "tw"
+path = "src/bin/tw.rs"
+
+[dependencies]

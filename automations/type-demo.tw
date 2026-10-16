@@ -1,0 +1,20 @@
+# Type a line with a rhythm, hop back a few words, then switch the cursor.
+#
+# Run it from the editor with Alt+R, then enter:
+#
+#     automations/type-demo.tw
+
+import "fast-text/automator"
+
+message("Typing with the automator")
+
+cursor("bar")
+type_text("Fast Text + TextWrite automation")
+
+repeat 3 times {
+    pause(200)
+    move("word_left", false)
+}
+
+pause(200)
+cursor("block")

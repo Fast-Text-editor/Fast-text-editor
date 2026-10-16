@@ -1,0 +1,18 @@
+# Working with text: splitting, transforming, and filtering.
+let sentence = "the quick brown fox jumps over the lazy dog"
+let words = split(sentence, " ")
+
+fn longest(items) {
+    let best = ""
+    for item in items {
+        if len(item) > len(best) {
+            best = item
+        }
+    }
+    return best
+}
+
+print "word count:", len(words)
+print "longest word:", longest(words)
+print "shouting:", join(map(words, fn(w) { return upper(w) }), " ")
+print "t-words:", filter(words, fn(w) { return starts_with(w, "t") })

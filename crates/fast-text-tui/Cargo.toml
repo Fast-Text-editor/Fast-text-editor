@@ -1,0 +1,31 @@
+[package]
+name = "fast-text-tui"
+description = "Fast Text terminal user interface."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+default-run = "fast-text"
+
+[lib]
+name = "fast_text_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fast-text"
+path = "src/main.rs"
+
+[[bin]]
+name = "ft"
+path = "src/bin/ft.rs"
+
+[dependencies]
+crossterm = "0.29.0"
+fast-text-core.workspace = true
+fast-text-lsp = { path = "../fast-text-lsp" }
+fast-text-plugin = { path = "../fast-text-plugin" }
+fast-text-syntax = { path = "../fast-text-syntax" }
+fast-text-textwrite = { path = "../fast-text-textwrite" }
+ratatui = "0.30.2"
+unicode-width.workspace = true

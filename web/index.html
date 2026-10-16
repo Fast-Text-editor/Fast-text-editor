@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fast Text — web</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="tabs">
+    <span class="brand">Fast&nbsp;Text</span>
+    <span class="tab active" id="tab-name">untitled</span>
+    <span class="spacer"></span>
+    <button id="btn-sample" title="Load sample code">Sample</button>
+  </header>
+
+  <div class="toolbar">
+    <label class="lang">
+      Language
+      <select id="language"></select>
+    </label>
+    <span class="sep"></span>
+    <input id="find" type="text" placeholder="Find…" spellcheck="false" />
+    <input id="replace" type="text" placeholder="Replace…" spellcheck="false" />
+    <label class="chk"><input id="case" type="checkbox" /> Match case</label>
+    <button id="btn-next">Next</button>
+    <button id="btn-prev">Prev</button>
+    <button id="btn-replace-all">Replace all</button>
+    <span class="sep"></span>
+    <button id="btn-undo" title="Engine undo">Undo</button>
+    <button id="btn-redo" title="Engine redo">Redo</button>
+  </div>
+
+  <main class="editor">
+    <textarea id="input" spellcheck="false" wrap="off"
+      placeholder="Start typing…"></textarea>
+    <pre id="preview" class="preview" aria-hidden="true"></pre>
+  </main>
+
+  <footer class="status">
+    <span id="st-file">untitled</span>
+    <span class="grow"></span>
+    <span id="st-lang">Plain Text</span>
+    <span id="st-pos">Ln 1, Col 1</span>
+    <span id="st-stats">0 lines · 0 chars</span>
+    <span id="st-dirty"></span>
+  </footer>
+
+  <p id="message" class="message" role="status"></p>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
