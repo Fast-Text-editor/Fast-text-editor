@@ -42,11 +42,18 @@ hidden = false
 #   goto_line, language, command_palette, complete, hover, definition,
 #   eval_textwrite, run_automation, toggle_theme, toggle_sidebar, open_folder,
 #   manage_plugins, install_plugin, cursor_bar, cursor_block, cursor_underline,
-#   help, next_tab, prev_tab, reload_config, open_config
+#   help, next_tab, prev_tab, reload_config, open_config,
+#   find_in_files, document_symbols, rename_symbol, format_document,
+#   code_actions, toggle_comment, duplicate_line, delete_line, move_line_up,
+#   move_line_down, select_next_occurrence, record_macro, replay_macro,
+#   save_macro
+#
+# A named macro can also be bound with the id "macro_<name>".
 [keys]
 # "alt+m"  = "manage_plugins"
 # "f1"     = "help"
 # "ctrl+k" = "cursor_block"
+# "alt+k"  = "macro_tidy imports"
 "#;
 
 /// One `[keys]` entry: a key and the command it triggers.

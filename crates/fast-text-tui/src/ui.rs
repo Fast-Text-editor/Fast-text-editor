@@ -90,6 +90,10 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
 
     draw_completion(app, frame, editor_area);
 
+    if app.picker.is_open() {
+        draw_picker(app, frame, area);
+    }
+
     if app.show_help {
         draw_help(app, frame, area);
     }
@@ -450,7 +454,34 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect) {
     let scroll_col = app.editor().scroll_col;
     let sel = app.editor().doc.selection_range();
     let has_sel = app.editor().doc.has_selection();
+    // Secondary selections: their ranges paint as selections, and a collapsed
+    // caret is drawn as a reversed cell.
+    let (extra_ranges, extra_carets) = {
+        let doc = &app.editor().doc;
+        let mut ranges = Vec::new();
+        let mut carets = Vec::new();
+        for s in doc.extra_selections() {
+            let (start, end) = s.range();
+            if start == end {
+                let p = doc.position_of(start);
+                carets.push((p.line, p.col));
+            } else {
+                ranges.push((start, end));
+            }
+        }
+        (ranges, carets)
+    };
 
+    // Bracket matching: highlight the bracket under the caret and its partner.
+    let bracket_marks: Vec<(usize, usize)> = bracket_pair(app)
+        .map(|(a, b)| vec![a, b])
+        .unwrap_or_default()
+        .into_iter()
+        .map(|index| {
+            let p = app.editor().doc.position_of(index);
+            (p.line, p.col)
+        })
+        .collect();
     // --- Render each visible line ---------------------------------------
     for row in 0..rows {
         let line_idx = top + row;
@@ -522,10 +553,61 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect) {
             row_bg,
             sel,
             has_sel,
+            &extra_ranges,
         );
-    }
 
-    // --- Cursor ----------------------------------------------------------
+        // Secondary carets on this line, drawn as reversed cells.
+        if !extra_carets.is_empty() {
+            let line_text = app.editor().doc.buffer().line_str(line_idx);
+            for &(caret_line, caret_col) in &extra_carets {
+                if caret_line != line_idx {
+                    continue;
+                }
+                let display = display_col(&line_text, caret_col);
+                if display < scroll_col {
+                    continue;
+                }
+                let screen = display - scroll_col;
+                if screen >= text_width {
+                    continue;
+                }
+                let x = text_x + screen as u16;
+                if let Some(cell) = frame.buffer_mut().cell_mut(Position2::xy(x, y)) {
+                    let ch = cell.symbol().chars().next().unwrap_or(' ');
+                    cell.set_char(if ch == '\0' { ' ' } else { ch });
+                    cell.set_style(
+                        Style::default()
+                            .bg(app.theme.foreground)
+                            .fg(app.theme.background),
+                    );
+                }
+            }
+        }
+
+        // Bracket-match highlight for this line, if any.
+        for &(bline, bcol) in &bracket_marks {
+            if bline != line_idx {
+                continue;
+            }
+            let line_text = app.editor().doc.buffer().line_str(line_idx);
+            let display = display_col(&line_text, bcol);
+            if display < scroll_col {
+                continue;
+            }
+            let screen = display - scroll_col;
+            if screen >= text_width {
+                continue;
+            }
+            let x = text_x + screen as u16;
+            if let Some(cell) = frame.buffer_mut().cell_mut(Position2::xy(x, y)) {
+                cell.set_style(
+                    Style::default()
+                        .bg(app.theme.status_accent)
+                        .fg(app.theme.background),
+                );
+            }
+        }
+    }
     let cursor_row = cursor_line.saturating_sub(top);
     if !app.sidebar.focused() && cursor_line >= top && cursor_line < top + rows {
         let cx = text_x as i64 + cursor_display as i64 - scroll_col as i64;
@@ -549,6 +631,7 @@ fn render_line_text(
     row_bg: ratatui::style::Color,
     sel: (usize, usize),
     has_sel: bool,
+    extra: &[(usize, usize)],
 ) {
     let theme = &app.theme;
     let chars: Vec<char> = text.chars().collect();
@@ -564,7 +647,10 @@ fn render_line_text(
             .map(|s| s.kind)
             .unwrap_or(fast_text_syntax::TokenKind::Plain);
 
-        let selected = has_sel && char_index >= sel.0 && char_index < sel.1;
+        let selected = (has_sel && char_index >= sel.0 && char_index < sel.1)
+            || extra
+                .iter()
+                .any(|&(s, e)| char_index >= s && char_index < e);
 
         if ch == '\t' {
             let advance = TAB_WIDTH - (col % TAB_WIDTH);
@@ -577,7 +663,7 @@ fn render_line_text(
                 if screen >= text_width {
                     return;
                 }
-                let sel_here = has_sel && char_index >= sel.0 && char_index < sel.1;
+                let sel_here = selected;
                 let mut style = Style::default().bg(row_bg).patch(theme.token_style(kind));
                 if sel_here {
                     style = style.bg(theme.selection);
@@ -756,6 +842,13 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),
         Line::from(" Shift+Arrows  Select  Ctrl+←/→  Word move"),
+        Line::from(" Alt+↑/↓  Move line   Alt+Shift+↑/↓  Add cursors"),
+        Line::from(" Ctrl+D  Select next occurrence"),
+        Line::from(" Ctrl+/  Comment   Shift+Ctrl+D  Duplicate line"),
+        Line::from(" Shift+Ctrl+K  Delete line  Alt+O  Symbols"),
+        Line::from(" Shift+Ctrl+F / Alt+F  Find in files"),
+        Line::from(" Alt+N  Rename   Shift+Ctrl+I  Format   Ctrl+.  Code actions"),
+        Line::from(" F6  Record macro  F7  Replay macro"),
         Line::from(" Sidebar: ↑↓ ←→ Enter   r reload  . hidden"),
         Line::from(" Mouse: click a file or tab; ✕ closes a tab"),
         Line::from(" Config: $XDG_CONFIG_HOME/fast-text/config.toml — rebind keys here"),
@@ -782,6 +875,96 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
                     .fg(app.theme.foreground),
             ),
         popup,
+    );
+}
+
+/// The centred list overlay: symbols, code actions, find-in-files results.
+fn draw_picker(app: &mut App, frame: &mut Frame, area: Rect) {
+    let popup = centered_rect(80, 70, area);
+    frame.render_widget(Clear, popup);
+
+    let title = app.picker.title().to_string();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.tab_active))
+        .style(Style::default().bg(app.theme.status_bg))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default()
+                .fg(app.theme.status_accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+    let list_area = rows[0];
+    let footer_area = rows[1];
+
+    app.picker.set_view_height(list_area.height as usize);
+    app.picker.set_area(popup, list_area);
+
+    let height = list_area.height as usize;
+    let start = app.picker.scroll();
+    let selected = app.picker.selected();
+    let items = app.picker.items();
+    let mut lines: Vec<Line> = Vec::new();
+    for (index, item) in items.iter().enumerate().skip(start).take(height) {
+        let badge = if item.badge.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", item.badge)
+        };
+        let mut spans = vec![Span::styled(
+            format!(" {badge}{}", item.label),
+            Style::default().fg(app.theme.foreground),
+        )];
+        if !item.detail.is_empty() {
+            spans.push(Span::styled(
+                format!("  {}", item.detail),
+                Style::default().fg(app.theme.gutter),
+            ));
+        }
+        let style = if index == selected {
+            Style::default()
+                .bg(app.theme.selection)
+                .fg(app.theme.foreground)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(spans).style(style));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " No matches ",
+            Style::default().fg(app.theme.gutter),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(app.theme.status_bg)),
+        list_area,
+    );
+
+    let footer = if app.picker.footer().is_empty() {
+        " Enter opens · Esc closes ".to_string()
+    } else {
+        format!(" {} · Enter opens · Esc closes ", app.picker.footer())
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            footer,
+            Style::default()
+                .fg(app.theme.gutter)
+                .bg(app.theme.status_bg),
+        ))),
+        footer_area,
     );
 }
 
@@ -998,6 +1181,67 @@ fn display_col(text: &str, char_col: usize) -> usize {
         }
     }
     col
+}
+
+/// The bracket under (or just before) the caret and its partner, as character
+/// indices. Strings and comments are not skipped, which keeps this dependency
+/// free and predictable.
+fn bracket_pair(app: &App) -> Option<(usize, usize)> {
+    let doc = &app.editor().doc;
+    let text: Vec<char> = doc.text().chars().collect();
+    if text.is_empty() {
+        return None;
+    }
+    let cursor = doc.cursor();
+    let idx = if cursor < text.len() && is_bracket(text[cursor]) {
+        cursor
+    } else if cursor > 0 && is_bracket(text[cursor - 1]) {
+        cursor - 1
+    } else {
+        return None;
+    };
+    let ch = text[idx];
+    let (open, close) = match ch {
+        '(' => ('(', ')'),
+        '[' => ('[', ']'),
+        '{' => ('{', '}'),
+        ')' => ('(', ')'),
+        ']' => ('[', ']'),
+        '}' => ('{', '}'),
+        _ => return None,
+    };
+    if ch == open {
+        let mut depth = 0i32;
+        for (i, &c) in text.iter().enumerate().skip(idx) {
+            if c == open {
+                depth += 1;
+            } else if c == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((idx, i));
+                }
+            }
+        }
+    } else {
+        let mut depth = 0i32;
+        for i in (0..=idx).rev() {
+            let c = text[i];
+            if c == close {
+                depth += 1;
+            } else if c == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((i, idx));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether `c` is one of the three bracket pairs.
+fn is_bracket(c: char) -> bool {
+    matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
 }
 
 /// Small helper so cells can be addressed by (x, y).

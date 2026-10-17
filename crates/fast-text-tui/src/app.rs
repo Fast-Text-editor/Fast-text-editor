@@ -2,8 +2,8 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use fast_text_core::{Document, SearchDirection};
-use fast_text_lsp::{Diagnostic, Severity};
+use fast_text_core::{Document, Position, SearchDirection};
+use fast_text_lsp::{Diagnostic, LspRange, Severity, TextEdit, WorkspaceEdit};
 use fast_text_plugin::{CursorStyle, EditorAction, EditorContext, KeyName, KeySpec, PluginHost};
 use fast_text_syntax::{highlight_line, HighlightSpan, LanguageId, LineState};
 use fast_text_textwrite::ScriptHost;
@@ -13,7 +13,9 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Rect;
 
 use crate::config::Config;
+use crate::find_in_files;
 use crate::lsp::LspManager;
+use crate::picker::{Picker, PickerItem, PickerOutcome};
 use crate::plugin_manager::{ManagerAction, PluginManager};
 use crate::sidebar::{Sidebar, SidebarAction};
 use crate::theme::Theme;
@@ -157,6 +159,18 @@ pub enum Prompt {
     Automation {
         input: String,
     },
+    /// A project-wide literal search.
+    FindInFiles {
+        input: String,
+    },
+    /// New name for the symbol under the cursor (LSP rename).
+    Rename {
+        input: String,
+    },
+    /// Name to store the last recorded macro under.
+    SaveMacro {
+        input: String,
+    },
     /// Evaluates a TextWrite snippet against the active buffer.
     Eval {
         input: String,
@@ -205,6 +219,9 @@ impl Prompt {
             Prompt::Automation { input } => Some(("Run automation: ".into(), input.clone())),
             Prompt::Eval { input } => Some(("TextWrite: ".into(), input.clone())),
             Prompt::OpenFolder { input } => Some(("Open folder: ".into(), input.clone())),
+            Prompt::FindInFiles { input } => Some(("Find in files: ".into(), input.clone())),
+            Prompt::Rename { input } => Some(("Rename symbol to: ".into(), input.clone())),
+            Prompt::SaveMacro { input } => Some(("Save macro as: ".into(), input.clone())),
             Prompt::InstallPlugin { input } => {
                 Some(("Install plugin (path): ".into(), input.clone()))
             }
@@ -221,7 +238,7 @@ pub struct CompletionState {
 }
 
 /// Command palette entries handled directly by the editor, with no plugin.
-const BUILTIN_COMMANDS: [&str; 9] = [
+const BUILTIN_COMMANDS: &[&str] = &[
     "Toggle sidebar",
     "Open folder…",
     "Manage plugins",
@@ -231,7 +248,47 @@ const BUILTIN_COMMANDS: [&str; 9] = [
     "Cursor: underline",
     "Reload config",
     "Open config file",
+    "Find in files…",
+    "Document symbols",
+    "Rename symbol…",
+    "Format document",
+    "Code actions",
+    "Toggle comment",
+    "Duplicate line",
+    "Delete line",
+    "Move line up",
+    "Move line down",
+    "Record macro",
+    "Stop recording",
+    "Replay macro",
+    "Save macro…",
 ];
+
+/// A place a picker row can jump to.
+#[derive(Debug, Clone)]
+struct JumpTarget {
+    path: PathBuf,
+    line: usize,
+    /// Character column within the line.
+    col: usize,
+}
+
+/// What the open picker's rows mean.
+enum PickerAction {
+    /// Nothing to do on accept (or an overlay without an action).
+    None,
+    /// Each row is a location to jump to.
+    Locations(Vec<JumpTarget>),
+    /// Each row is a workspace edit to apply.
+    Edits(Vec<WorkspaceEdit>),
+}
+
+/// Which flavour of picker is open, when the distinction matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerKind {
+    Generic,
+    FindInFiles,
+}
 
 /// A clickable region of the tab bar, recorded while it is drawn.
 #[derive(Debug, Clone, Copy)]
@@ -317,6 +374,26 @@ pub struct App {
     pub keybindings: HashMap<KeySpec, String>,
     /// Where `config.toml` was read from (or would be written to).
     pub config_path: Option<PathBuf>,
+    /// The generic list overlay (symbols, code actions, find in files).
+    pub picker: Picker,
+    /// What a chosen picker row means.
+    picker_action: PickerAction,
+    /// Which picker flavour is open.
+    picker_kind: PickerKind,
+    /// The live find-in-files query.
+    pub find_query: String,
+    /// Whether find-in-files matches case.
+    pub find_case_sensitive: bool,
+    /// The most recent find-in-files results.
+    find_results: Vec<find_in_files::FileMatch>,
+    /// Keys recorded so far, while a macro is being recorded.
+    recording: Option<Vec<KeyEvent>>,
+    /// The last macro recorded or loaded, ready to replay.
+    last_macro: Option<Vec<KeyEvent>>,
+    /// Named macros, shown in the command palette as `Macro: <name>`.
+    macros: HashMap<String, Vec<KeyEvent>>,
+    /// True while a macro is replaying (so replays are not re-recorded).
+    replaying: bool,
 }
 
 impl App {
@@ -383,6 +460,16 @@ impl App {
             tab_hits: Vec::new(),
             keybindings: HashMap::new(),
             config_path: None,
+            picker: Picker::new(),
+            picker_action: PickerAction::None,
+            picker_kind: PickerKind::Generic,
+            find_query: String::new(),
+            find_case_sensitive: false,
+            find_results: Vec::new(),
+            recording: None,
+            last_macro: None,
+            macros: HashMap::new(),
+            replaying: false,
         }
     }
 
@@ -540,6 +627,10 @@ impl App {
 
     /// Runs a Rhai plugin or TextWrite script command by title.
     pub fn run_plugin_command(&mut self, title: &str) {
+        if let Some(name) = title.strip_prefix("Macro: ") {
+            self.run_named_macro(name);
+            return;
+        }
         if self.run_builtin_command(title) {
             return;
         }
@@ -595,6 +686,70 @@ impl App {
             }
             "Open config file" => {
                 self.open_config_file();
+                true
+            }
+            "Find in files…" => {
+                self.prompt = Prompt::FindInFiles {
+                    input: self.last_search.clone().unwrap_or_default(),
+                };
+                true
+            }
+            "Document symbols" => {
+                self.show_document_symbols();
+                true
+            }
+            "Rename symbol…" => {
+                self.open_rename_prompt();
+                true
+            }
+            "Format document" => {
+                self.format_document();
+                true
+            }
+            "Code actions" => {
+                self.show_code_actions();
+                true
+            }
+            "Toggle comment" => {
+                self.toggle_comment();
+                true
+            }
+            "Duplicate line" => {
+                self.duplicate_line();
+                true
+            }
+            "Delete line" => {
+                self.delete_line();
+                true
+            }
+            "Move line up" => {
+                self.move_line_up();
+                true
+            }
+            "Move line down" => {
+                self.move_line_down();
+                true
+            }
+            "Record macro" => {
+                if self.recording.is_none() {
+                    self.toggle_macro_recording();
+                }
+                true
+            }
+            "Stop recording" => {
+                if self.recording.is_some() {
+                    self.toggle_macro_recording();
+                }
+                true
+            }
+            "Replay macro" => {
+                self.replay_last_macro();
+                true
+            }
+            "Save macro…" => {
+                self.prompt = Prompt::SaveMacro {
+                    input: String::new(),
+                };
                 true
             }
             _ => false,
@@ -707,9 +862,44 @@ impl App {
             "prev_tab" | "previous_tab" => self.prev_tab(),
             "reload_config" => self.reload_config(),
             "open_config" | "open_config_file" => self.open_config_file(),
-            _ => return false,
+            "find_in_files" | "search_in_files" | "grep" => {
+                self.prompt = Prompt::FindInFiles {
+                    input: self.last_search.clone().unwrap_or_default(),
+                }
+            }
+            "document_symbols" | "symbols" | "outline" => self.show_document_symbols(),
+            "rename_symbol" | "rename" => self.open_rename_prompt(),
+            "format_document" | "format" => self.format_document(),
+            "code_actions" | "code_action" => self.show_code_actions(),
+            "toggle_comment" | "comment" => self.toggle_comment(),
+            "duplicate_line" => self.duplicate_line(),
+            "delete_line" => self.delete_line(),
+            "move_line_up" => self.move_line_up(),
+            "move_line_down" => self.move_line_down(),
+            "select_next_occurrence" | "add_cursor_to_next" => self.select_next_occurrence(),
+            "record_macro" => self.toggle_macro_recording(),
+            "replay_macro" => self.replay_last_macro(),
+            "save_macro" => {
+                self.prompt = Prompt::SaveMacro {
+                    input: String::new(),
+                }
+            }
+            _ => {
+                if let Some(name) = id.strip_prefix("macro_") {
+                    self.run_named_macro(name);
+                } else {
+                    return false;
+                }
+            }
         }
         true
+    }
+
+    /// Prompts for a new symbol name (LSP rename), prefilled with the word
+    /// under the cursor.
+    fn open_rename_prompt(&mut self) {
+        let input = self.editor().doc.word_under_cursor().unwrap_or_default();
+        self.prompt = Prompt::Rename { input };
     }
 
     /// The active buffer's path, or an empty string when it has none.
@@ -760,6 +950,7 @@ impl App {
         let mut titles: Vec<String> = BUILTIN_COMMANDS.iter().map(|s| s.to_string()).collect();
         titles.extend(self.plugins.command_titles());
         titles.extend(self.scripts.command_titles());
+        titles.extend(self.macro_command_titles());
         titles.sort();
         titles.dedup();
         titles
@@ -1016,6 +1207,338 @@ impl App {
         }
     }
 
+    /// Renames the symbol under the cursor via the language server.
+    fn rename_symbol(&mut self, new_name: &str) {
+        if new_name.is_empty() {
+            self.set_error("Rename needs a new name");
+            return;
+        }
+        match self.lsp.rename(self.editor(), new_name) {
+            Ok(edit) if edit.is_empty() => self.set_message("Rename produced no changes"),
+            Ok(edit) => self.apply_workspace_edit(&edit),
+            Err(e) => self.set_error(format!("Rename: {e}")),
+        }
+    }
+
+    /// Formats the active document via the language server.
+    fn format_document(&mut self) {
+        let edits = match self.lsp.format(self.editor()) {
+            Ok(edits) => edits,
+            Err(e) => {
+                self.set_error(format!("Format: {e}"));
+                return;
+            }
+        };
+        if edits.is_empty() {
+            self.set_message("Already formatted");
+            return;
+        }
+        let ranges: Vec<(usize, usize, String)> = {
+            let doc = &self.editor().doc;
+            edits
+                .iter()
+                .map(|te| {
+                    let (s, e) = lsp_range_to_chars(doc, &te.range);
+                    (s, e, te.new_text.clone())
+                })
+                .collect()
+        };
+        self.editor_mut().doc.apply_edits(&ranges);
+        self.set_message(format!("Formatted ({} edit(s))", edits.len()));
+    }
+
+    /// Offers the server's code actions for the cursor in the picker.
+    fn show_code_actions(&mut self) {
+        let actions = match self.lsp.code_actions(self.editor()) {
+            Ok(actions) => actions,
+            Err(e) => {
+                self.set_error(format!("Code actions: {e}"));
+                return;
+            }
+        };
+        let mut items = Vec::new();
+        let mut edits = Vec::new();
+        for action in actions {
+            let Some(edit) = action.edit else {
+                // Command-only actions need an `executeCommand` round-trip.
+                continue;
+            };
+            if edit.is_empty() {
+                continue;
+            }
+            let badge = action
+                .kind
+                .as_deref()
+                .and_then(|k| k.split('.').next())
+                .unwrap_or("");
+            items.push(PickerItem::new(action.title).with_badge(badge));
+            edits.push(edit);
+        }
+        if items.is_empty() {
+            self.set_message("No applicable code actions");
+            return;
+        }
+        self.picker_kind = PickerKind::Generic;
+        self.picker_action = PickerAction::Edits(edits);
+        self.picker.open("Code actions", items);
+    }
+
+    /// Shows the document outline in the picker.
+    fn show_document_symbols(&mut self) {
+        let symbols = match self.lsp.document_symbols(self.editor()) {
+            Ok(symbols) => symbols,
+            Err(e) => {
+                self.set_error(format!("Symbols: {e}"));
+                return;
+            }
+        };
+        if symbols.is_empty() {
+            self.set_message("No symbols");
+            return;
+        }
+        let current = self.editor().doc.path().map(Path::to_path_buf);
+        let mut items = Vec::new();
+        let mut targets = Vec::new();
+        for symbol in symbols {
+            let path = symbol
+                .uri
+                .as_deref()
+                .and_then(fast_text_lsp::uri_to_path)
+                .or_else(|| current.clone());
+            let Some(path) = path else {
+                continue;
+            };
+            let line = symbol.range.start.line as usize;
+            let col = self.utf16_col_for(&path, line, symbol.range.start.character as usize);
+            let badge = symbol.kind_badge();
+            let mut item = PickerItem::new(symbol.name).with_badge(badge);
+            if let Some(detail) = symbol.detail {
+                item = item.with_detail(detail);
+            }
+            items.push(item);
+            targets.push(JumpTarget { path, line, col });
+        }
+        if items.is_empty() {
+            self.set_message("No symbols");
+            return;
+        }
+        self.picker_kind = PickerKind::Generic;
+        self.picker_action = PickerAction::Locations(targets);
+        self.picker.open("Symbols", items);
+    }
+
+    /// Converts an LSP UTF-16 column to a character column for `path`.
+    fn utf16_col_for(&self, path: &Path, line: usize, utf16: usize) -> usize {
+        if let Some(ed) = self
+            .editors
+            .iter()
+            .find(|e| e.doc.path().is_some_and(|p| p == path))
+        {
+            if line < ed.doc.buffer().len_lines() {
+                return utf16_to_char_col(&ed.doc.buffer().line_str(line), utf16);
+            }
+        }
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if let Some(text_line) = text.lines().nth(line) {
+                return utf16_to_char_col(text_line, utf16);
+            }
+        }
+        utf16
+    }
+
+    /// Applies a server workspace edit to every file it touches.
+    fn apply_workspace_edit(&mut self, edit: &WorkspaceEdit) {
+        let changes: Vec<(PathBuf, Vec<TextEdit>)> = edit
+            .changes
+            .iter()
+            .filter_map(|(uri, edits)| fast_text_lsp::uri_to_path(uri).map(|p| (p, edits.clone())))
+            .collect();
+        let mut edits_applied = 0;
+        let mut files = 0;
+        for (path, edits) in changes {
+            let target = self
+                .editors
+                .iter()
+                .position(|e| e.doc.path().is_some_and(|p| p == path));
+            let idx = match target {
+                Some(i) => i,
+                None => match Editor::open_or_new(path.clone()) {
+                    Ok(e) => {
+                        self.editors.push(e);
+                        self.editors.len() - 1
+                    }
+                    Err(e) => {
+                        self.set_error(format!("Cannot open {}: {e}", path.display()));
+                        continue;
+                    }
+                },
+            };
+            let doc = &mut self.editors[idx].doc;
+            let ranges: Vec<(usize, usize, String)> = edits
+                .iter()
+                .map(|te| {
+                    let (s, e) = lsp_range_to_chars(doc, &te.range);
+                    (s, e, te.new_text.clone())
+                })
+                .collect();
+            edits_applied += ranges.len();
+            files += 1;
+            doc.apply_edits(&ranges);
+        }
+        if files == 0 {
+            self.set_message("Nothing to apply");
+        } else {
+            self.set_message(format!(
+                "Applied {edits_applied} edit(s) in {files} file(s)"
+            ));
+        }
+    }
+
+    // --- Find in files -----------------------------------------------------
+
+    /// Opens the find-in-files picker for `query`.
+    fn open_find_in_files(&mut self, query: &str) {
+        self.find_query = query.to_string();
+        self.picker_kind = PickerKind::FindInFiles;
+        self.picker
+            .open(format!("Find in files: {query}"), Vec::new());
+        self.refresh_find_in_files();
+    }
+
+    /// Re-runs the search and refreshes the open picker.
+    fn refresh_find_in_files(&mut self) {
+        let root = self.sidebar.root().to_path_buf();
+        self.find_results = find_in_files::find(&root, &self.find_query, self.find_case_sensitive);
+        self.apply_find_items();
+    }
+
+    /// Rebuilds the picker rows from the cached results.
+    fn apply_find_items(&mut self) {
+        let root = self.sidebar.root().to_path_buf();
+        let items: Vec<PickerItem> = self
+            .find_results
+            .iter()
+            .map(|m| {
+                let rel = m.path.strip_prefix(&root).unwrap_or(&m.path);
+                PickerItem::new(m.text.trim_start().to_string()).with_detail(format!(
+                    "{}:{}",
+                    rel.display(),
+                    m.line + 1
+                ))
+            })
+            .collect();
+        let targets: Vec<JumpTarget> = self
+            .find_results
+            .iter()
+            .map(|m| JumpTarget {
+                path: m.path.clone(),
+                line: m.line,
+                col: m.col,
+            })
+            .collect();
+        let count = targets.len();
+        self.picker
+            .set_title(format!("Find in files: {}", self.find_query));
+        self.picker.set_items(items);
+        let case = if self.find_case_sensitive {
+            "case-sensitive"
+        } else {
+            "case-insensitive"
+        };
+        self.picker
+            .set_footer(format!("{count} match(es) · {case} · Tab toggles case"));
+        self.picker_action = PickerAction::Locations(targets);
+    }
+
+    // --- Picker ------------------------------------------------------------
+
+    /// Routes a key to the open picker.
+    fn handle_picker_key(&mut self, key: KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if self.picker_kind == PickerKind::FindInFiles {
+            match key.code {
+                KeyCode::Char(c) if !ctrl && !alt => {
+                    self.find_query.push(c);
+                    self.refresh_find_in_files();
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    self.find_query.pop();
+                    self.refresh_find_in_files();
+                    return true;
+                }
+                KeyCode::Tab => {
+                    self.find_case_sensitive = !self.find_case_sensitive;
+                    self.refresh_find_in_files();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        match self.picker.handle_key(key) {
+            PickerOutcome::Close => self.close_picker(),
+            PickerOutcome::Handled => {}
+            PickerOutcome::Chosen(index) => {
+                // Keep the action alive until the row has been chosen.
+                self.picker.close();
+                self.picker_kind = PickerKind::Generic;
+                self.choose_picker_row(index);
+                self.picker_action = PickerAction::None;
+            }
+        }
+        true
+    }
+
+    fn close_picker(&mut self) {
+        self.picker.close();
+        self.picker_action = PickerAction::None;
+        self.picker_kind = PickerKind::Generic;
+    }
+
+    /// Acts on the chosen picker row.
+    fn choose_picker_row(&mut self, index: usize) {
+        match &self.picker_action {
+            PickerAction::None => {}
+            PickerAction::Locations(targets) => {
+                if let Some(target) = targets.get(index).cloned() {
+                    self.open_and_jump(&target.path, target.line, target.col);
+                }
+            }
+            PickerAction::Edits(edits) => {
+                if let Some(edit) = edits.get(index).cloned() {
+                    self.apply_workspace_edit(&edit);
+                }
+            }
+        }
+    }
+
+    /// Opens `path` (if needed) and places the caret at `(line, col)`.
+    pub fn open_and_jump(&mut self, path: &Path, line: usize, col: usize) {
+        let target = self
+            .editors
+            .iter()
+            .position(|e| e.doc.path().is_some_and(|p| p == path));
+        let idx = match target {
+            Some(i) => i,
+            None => match Editor::open_or_new(path.to_path_buf()) {
+                Ok(e) => {
+                    self.editors.push(e);
+                    self.editors.len() - 1
+                }
+                Err(e) => {
+                    self.set_error(format!("Cannot open {}: {e}", path.display()));
+                    return;
+                }
+            },
+        };
+        self.active = idx;
+        let ed = &mut self.editors[idx];
+        let line = line.min(ed.doc.buffer().len_lines().saturating_sub(1));
+        let index = ed.doc.index_of(Position::new(line, col));
+        ed.doc.set_cursor(index);
+    }
+
     fn set_message(&mut self, msg: impl Into<String>) {
         self.message = Some(msg.into());
         self.is_error = false;
@@ -1257,6 +1780,16 @@ impl App {
     pub fn handle_mouse(&mut self, event: MouseEvent) -> bool {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => self.click(event.column, event.row),
+            MouseEventKind::ScrollUp if self.picker.is_open() => {
+                self.picker
+                    .handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+                true
+            }
+            MouseEventKind::ScrollDown if self.picker.is_open() => {
+                self.picker
+                    .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+                true
+            }
             MouseEventKind::ScrollUp if self.plugin_manager.is_open() => {
                 self.plugin_manager.scroll_by(-3);
                 true
@@ -1283,6 +1816,24 @@ impl App {
 
     /// Handles a left click at a screen cell.
     fn click(&mut self, column: u16, row: u16) -> bool {
+        // The picker is modal: a click selects, a second click activates.
+        if self.picker.is_open() {
+            if let Some(index) = self.picker.row_at(column, row) {
+                if self.picker.selected() == index {
+                    self.picker.close();
+                    self.picker_kind = PickerKind::Generic;
+                    self.choose_picker_row(index);
+                    self.picker_action = PickerAction::None;
+                } else {
+                    self.picker.select_index(index);
+                }
+            }
+            return true;
+        }
+        self.click_editor(column, row)
+    }
+
+    fn click_editor(&mut self, column: u16, row: u16) -> bool {
         // The plugin manager is modal: it takes every click while open.
         if self.plugin_manager.is_open() {
             if let Some(index) = self.plugin_manager.row_at(column, row) {
@@ -1420,16 +1971,319 @@ impl App {
         self.editor_mut().doc.insert_str(&clip);
     }
 
+    // --- Editing ergonomics ------------------------------------------------
+
+    /// Inserts a typed character, honouring auto-pairs.
+    fn typed_char(&mut self, c: char) {
+        let ed = self.editor_mut();
+        let doc = &mut ed.doc;
+        let opener = matching_open(c);
+        let closer = matching_close(c);
+
+        // Quotation characters are their own pair.
+        if closer == Some(c) {
+            if doc.has_selection() {
+                let text = doc.selected_text();
+                doc.insert_str(&format!("{c}{text}{c}"));
+                return;
+            }
+            let head = doc.cursor();
+            if doc.buffer().char_at(head) == Some(c) {
+                doc.move_right(false);
+                return;
+            }
+            doc.insert_str(&format!("{c}{c}"));
+            doc.move_left(false);
+            return;
+        }
+
+        // An opening bracket inserts its matching close.
+        if let Some(close) = closer {
+            if doc.has_selection() {
+                let text = doc.selected_text();
+                doc.insert_str(&format!("{c}{text}{close}"));
+            } else {
+                doc.insert_str(&format!("{c}{close}"));
+                doc.move_left(false);
+            }
+            return;
+        }
+
+        // A closing bracket steps over an auto-inserted partner.
+        if opener.is_some() {
+            let head = doc.cursor();
+            if doc.selection().is_empty() && doc.buffer().char_at(head) == Some(c) {
+                doc.move_right(false);
+                return;
+            }
+        }
+
+        doc.insert_char(c);
+    }
+
+    /// Inserts a newline, copying the current indentation and opening a block.
+    fn newline_auto_indent(&mut self) {
+        let ed = self.editor_mut();
+        let doc = &mut ed.doc;
+        let pos = doc.cursor_position();
+        let line = doc.buffer().line_str(pos.line);
+        let indent: String = line
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        let head = doc.selection().head;
+        let before = head.checked_sub(1).and_then(|i| doc.buffer().char_at(i));
+        let after = doc.buffer().char_at(head);
+        let opens = matches!(before, Some('{') | Some('[') | Some('('));
+        let closes = matches!(after, Some('}') | Some(']') | Some(')'));
+        doc.insert_newline();
+        doc.insert_str(&indent);
+        if opens && closes {
+            // Put the closer on its own line and step the caret onto the
+            // freshly indented inner line.
+            doc.insert_str("    ");
+            doc.insert_newline();
+            doc.insert_str(&indent);
+            doc.move_up(false);
+            doc.move_line_end(false);
+        }
+    }
+
+    /// Adds the next occurrence of the word/selection as a caret.
+    pub fn select_next_occurrence(&mut self) {
+        let case = self.last_search_case;
+        if !self.editor_mut().doc.select_next_occurrence(case) {
+            self.set_error("No further occurrence");
+        }
+    }
+
+    /// Toggles a `//`-style comment on the selected or current lines.
+    pub fn toggle_comment(&mut self) {
+        let marker = self
+            .editor()
+            .language
+            .def()
+            .line_comment
+            .first()
+            .copied()
+            .unwrap_or("//");
+        let (start_line, end_line) = {
+            let doc = &self.editor().doc;
+            let (s, e) = doc.selection().range();
+            (doc.position_of(s).line, doc.position_of(e).line)
+        };
+        let all_commented = (start_line..=end_line).all(|line| {
+            let text = self.editor().doc.buffer().line_str(line);
+            let trimmed = text.trim_start();
+            trimmed.is_empty() || trimmed.starts_with(marker)
+        });
+        let mut edits = Vec::new();
+        for line in start_line..=end_line {
+            let line_start = self.editor().doc.index_of(Position::new(line, 0));
+            let text = self.editor().doc.buffer().line_str(line);
+            if text.trim().is_empty() {
+                continue;
+            }
+            if all_commented {
+                let stripped = text.strip_prefix(marker).unwrap_or(&text);
+                let stripped = stripped.strip_prefix(' ').unwrap_or(stripped);
+                let removed = text.chars().count() - stripped.chars().count();
+                edits.push((line_start, line_start + removed, String::new()));
+            } else {
+                let prefix: String = text
+                    .chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .collect();
+                let at = line_start + prefix.chars().count();
+                edits.push((at, at, format!("{marker} ")));
+            }
+        }
+        if edits.is_empty() {
+            return;
+        }
+        self.editor_mut().doc.apply_edits(&edits);
+    }
+
+    /// Duplicates the current line (or every selected line).
+    pub fn duplicate_line(&mut self) {
+        let ed = self.editor_mut();
+        let doc = &mut ed.doc;
+        let (s, e) = doc.selection().range();
+        let start_line = doc.position_of(s).line;
+        let end_line = doc.position_of(e).line;
+        let line_start = doc.index_of(Position::new(start_line, 0));
+        let line_end = doc.index_of(Position::new(end_line, usize::MAX));
+        let text = doc.buffer().slice(line_start, line_end);
+        let ending = doc.buffer().line_ending().as_str().to_string();
+        doc.apply_edits(&[(line_end, line_end, format!("{ending}{text}"))]);
+        let caret = line_end + ending.chars().count() + text.chars().count();
+        doc.set_cursor(caret.min(doc.buffer().max_char_idx()));
+    }
+
+    /// Deletes the current line (or every selected line).
+    pub fn delete_line(&mut self) {
+        let ed = self.editor_mut();
+        let doc = &mut ed.doc;
+        let (s, e) = doc.selection().range();
+        let start_line = doc.position_of(s).line;
+        let end_line = doc.position_of(e).line;
+        let start = doc.index_of(Position::new(start_line, 0));
+        let last = doc.buffer().len_lines().saturating_sub(1);
+        let (from, to) = if end_line < last {
+            (start, doc.index_of(Position::new(end_line + 1, 0)))
+        } else if start > 0 {
+            // Last line: drop the newline that precedes it instead.
+            (start - 1, doc.index_of(Position::new(end_line, usize::MAX)))
+        } else {
+            (start, doc.index_of(Position::new(end_line, usize::MAX)))
+        };
+        doc.apply_edits(&[(from, to, String::new())]);
+        doc.set_cursor(from.min(doc.buffer().max_char_idx()));
+    }
+
+    /// Moves the current line (or selection) up or down by one line.
+    fn shift_lines(&mut self, delta: i64) {
+        let ed = self.editor_mut();
+        let doc = &mut ed.doc;
+        let pos = doc.cursor_position();
+        let line = pos.line as i64;
+        let target = line + delta;
+        let last = doc.buffer().len_lines().saturating_sub(1) as i64;
+        if line < 0 || target < 0 || target > last {
+            return;
+        }
+        let upper = line.min(target) as usize;
+        let lower = line.max(target) as usize;
+        let upper_start = doc.index_of(Position::new(upper, 0));
+        let lower_end = doc.index_of(Position::new(lower, usize::MAX));
+        let upper_text = doc
+            .buffer()
+            .slice(upper_start, doc.index_of(Position::new(upper, usize::MAX)));
+        let lower_text = doc
+            .buffer()
+            .slice(doc.index_of(Position::new(lower, 0)), lower_end);
+        let ending = doc.buffer().line_ending().as_str().to_string();
+        doc.apply_edits(&[(
+            upper_start,
+            lower_end,
+            format!("{lower_text}{ending}{upper_text}"),
+        )]);
+        let new_line = (line + delta) as usize;
+        let col = pos.col.min(doc.buffer().line_len_chars(new_line));
+        doc.set_cursor(doc.index_of(Position::new(new_line, col)));
+    }
+
+    pub fn move_line_up(&mut self) {
+        self.shift_lines(-1);
+    }
+
+    pub fn move_line_down(&mut self) {
+        self.shift_lines(1);
+    }
+
+    // --- Macros ------------------------------------------------------------
+
+    /// Starts or stops recording a macro (F6).
+    fn toggle_macro_recording(&mut self) {
+        if self.replaying {
+            return;
+        }
+        if let Some(recorded) = self.recording.take() {
+            let count = recorded.len();
+            self.last_macro = Some(recorded);
+            self.set_message(format!("Recorded macro ({count} keys) — F7 to replay"));
+        } else {
+            self.recording = Some(Vec::new());
+            self.set_message("Recording macro — F6 to stop");
+        }
+    }
+
+    /// Replays the last recorded macro (F7).
+    fn replay_last_macro(&mut self) {
+        if self.replaying {
+            return;
+        }
+        let Some(keys) = self.last_macro.clone() else {
+            self.set_error("No macro recorded");
+            return;
+        };
+        if keys.is_empty() {
+            self.set_message("Macro is empty");
+            return;
+        }
+        self.replaying = true;
+        for key in keys {
+            self.dispatch_key(key);
+        }
+        self.replaying = false;
+        self.set_message("Replayed macro");
+    }
+
+    /// Runs a named macro from the palette.
+    fn run_named_macro(&mut self, name: &str) {
+        if self.replaying {
+            return;
+        }
+        let Some(keys) = self.macros.get(name).cloned() else {
+            self.set_error(format!("No macro named '{name}'"));
+            return;
+        };
+        self.replaying = true;
+        for key in keys {
+            self.dispatch_key(key);
+        }
+        self.replaying = false;
+        self.set_message(format!("Ran macro '{name}'"));
+    }
+
+    /// Stores the last recorded macro under a name.
+    fn save_macro(&mut self, name: &str) {
+        if name.is_empty() {
+            self.set_error("Macro needs a name");
+            return;
+        }
+        let Some(keys) = self.last_macro.clone() else {
+            self.set_error("Record a macro first (F6)");
+            return;
+        };
+        self.macros.insert(name.to_string(), keys);
+        self.set_message(format!("Saved macro '{name}'"));
+    }
+
+    /// Named macros, offered in the command palette.
+    fn macro_command_titles(&self) -> Vec<String> {
+        let mut names: Vec<&String> = self.macros.keys().collect();
+        names.sort();
+        names.iter().map(|n| format!("Macro: {n}")).collect()
+    }
+
     // --- Input -------------------------------------------------------------
 
     /// Handles one key event. Returns true if the app should redraw.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // A replaying macro must not be re-recorded, and cannot nest.
+        if self.replaying {
+            return self.dispatch_key(key);
+        }
+        if let Some(recorded) = self.recording.as_mut() {
+            // The stop key ends the recording without being part of it.
+            if !is_macro_toggle(&key) {
+                recorded.push(key);
+            }
+        }
+        self.dispatch_key(key)
+    }
+
+    fn dispatch_key(&mut self, key: KeyEvent) -> bool {
         if self.show_help {
             self.show_help = false;
             return true;
         }
         if self.plugin_manager.is_open() {
             return self.handle_plugin_manager_key(key);
+        }
+        if self.picker.is_open() {
+            return self.handle_picker_key(key);
         }
         if self.prompt.is_active() {
             self.handle_prompt_key(key);
@@ -1550,6 +2404,9 @@ impl App {
             Prompt::Eval { input } => self.eval_script(&input),
             Prompt::OpenFolder { input } => self.open_folder(input.trim()),
             Prompt::InstallPlugin { input } => self.install_plugin(input.trim()),
+            Prompt::FindInFiles { input } => self.open_find_in_files(input.trim()),
+            Prompt::Rename { input } => self.rename_symbol(input.trim()),
+            Prompt::SaveMacro { input } => self.save_macro(input.trim()),
         }
     }
 
@@ -1605,6 +2462,20 @@ impl App {
         }
         if ctrl && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M')) {
             self.open_plugin_manager();
+            return true;
+        }
+        if ctrl && shift && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
+            self.prompt = Prompt::FindInFiles {
+                input: self.last_search.clone().unwrap_or_default(),
+            };
+            return true;
+        }
+        if ctrl && shift && matches!(key.code, KeyCode::Char('i') | KeyCode::Char('I')) {
+            self.format_document();
+            return true;
+        }
+        if ctrl && shift && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+            self.duplicate_line();
             return true;
         }
 
@@ -1704,6 +2575,22 @@ impl App {
                     self.paste();
                     return true;
                 }
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    self.select_next_occurrence();
+                    return true;
+                }
+                KeyCode::Char('k') | KeyCode::Char('K') => {
+                    self.delete_line();
+                    return true;
+                }
+                KeyCode::Char('/') => {
+                    self.toggle_comment();
+                    return true;
+                }
+                KeyCode::Char('.') => {
+                    self.show_code_actions();
+                    return true;
+                }
                 KeyCode::Char('t') => {
                     self.toggle_theme();
                     return true;
@@ -1792,11 +2679,25 @@ impl App {
             KeyCode::F(3) => self.find_next(SearchDirection::Forward),
             KeyCode::F(4) => self.find_next(SearchDirection::Backward),
             KeyCode::F(5) => self.show_hover(),
+            KeyCode::F(6) => self.toggle_macro_recording(),
+            KeyCode::F(7) => self.replay_last_macro(),
             KeyCode::F(12) => self.goto_definition(),
             KeyCode::Esc => {
                 self.editor_mut().doc.collapse_selection();
                 self.message = None;
             }
+            KeyCode::Char('f') if alt => {
+                self.prompt = Prompt::FindInFiles {
+                    input: self.last_search.clone().unwrap_or_default(),
+                }
+            }
+            KeyCode::Char('o') if alt => self.show_document_symbols(),
+            KeyCode::Char('n') if alt => self.open_rename_prompt(),
+            KeyCode::Char('c') if alt => self.toggle_comment(),
+            KeyCode::Up if alt && shift => self.editor_mut().doc.add_caret_above(),
+            KeyCode::Down if alt && shift => self.editor_mut().doc.add_caret_below(),
+            KeyCode::Up if alt => self.move_line_up(),
+            KeyCode::Down if alt => self.move_line_down(),
             KeyCode::Left if alt => self.editor_mut().doc.move_word_backward(shift),
             KeyCode::Right if alt => self.editor_mut().doc.move_word_forward(shift),
             KeyCode::Left => self.editor_mut().doc.move_left(shift),
@@ -1817,11 +2718,11 @@ impl App {
                     self.editor_mut().doc.move_down(shift);
                 }
             }
-            KeyCode::Enter => self.editor_mut().doc.insert_newline(),
+            KeyCode::Enter => self.newline_auto_indent(),
             KeyCode::Tab => self.editor_mut().doc.insert_char('\t'),
             KeyCode::Backspace => self.editor_mut().doc.backspace(),
             KeyCode::Delete => self.editor_mut().doc.delete_forward(),
-            KeyCode::Char(c) if !ctrl => self.editor_mut().doc.insert_char(c),
+            KeyCode::Char(c) if !ctrl && !alt => self.typed_char(c),
             _ => {}
         }
         true
@@ -1877,6 +2778,9 @@ fn prompt_input_mut(prompt: &mut Prompt) -> Option<&mut String> {
         | Prompt::Command { input }
         | Prompt::Automation { input }
         | Prompt::Eval { input }
+        | Prompt::FindInFiles { input }
+        | Prompt::Rename { input }
+        | Prompt::SaveMacro { input }
         | Prompt::OpenFolder { input }
         | Prompt::InstallPlugin { input } => Some(input),
         Prompt::Replace {
@@ -1892,6 +2796,69 @@ fn prompt_input_mut(prompt: &mut Prompt) -> Option<&mut String> {
         }
         Prompt::None => None,
     }
+}
+
+/// The closing character that pairs with an opening one.
+fn matching_close(open: char) -> Option<char> {
+    match open {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '`' => Some('`'),
+        _ => None,
+    }
+}
+
+/// The opening character that a closing one pairs with.
+fn matching_open(close: char) -> Option<char> {
+    match close {
+        ')' => Some('('),
+        ']' => Some('['),
+        '}' => Some('{'),
+        '"' | '\'' | '`' => Some(close),
+        _ => None,
+    }
+}
+
+/// Converts an LSP UTF-16 column into a character column within `line`.
+fn utf16_to_char_col(line: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    let mut col = 0;
+    for c in line.chars() {
+        if units >= utf16 {
+            break;
+        }
+        units += c.len_utf16();
+        col += 1;
+    }
+    col
+}
+
+/// Converts an LSP (line, UTF-16 column) position into a character index.
+fn lsp_pos_to_char(doc: &Document, line: u32, character: u32) -> usize {
+    let line = line as usize;
+    let text = if line < doc.buffer().len_lines() {
+        doc.buffer().line_str(line)
+    } else {
+        String::new()
+    };
+    let col = utf16_to_char_col(&text, character as usize);
+    doc.index_of(Position::new(line, col))
+}
+
+/// Converts an LSP range into a pair of character indices.
+fn lsp_range_to_chars(doc: &Document, range: &LspRange) -> (usize, usize) {
+    (
+        lsp_pos_to_char(doc, range.start.line, range.start.character),
+        lsp_pos_to_char(doc, range.end.line, range.end.character),
+    )
+}
+
+/// Whether a key stops macro recording (it is not part of the macro).
+fn is_macro_toggle(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::F(6))
 }
 
 /// The plugin directories, in load order: the user config first, then the
@@ -1979,6 +2946,18 @@ mod tests {
         for c in text.chars() {
             app.handle_key(key(KeyCode::Char(c)));
         }
+    }
+
+    /// Replaces the active buffer's text with `text`, leaving the caret at 0.
+    fn set_text(app: &mut App, text: &str) {
+        let doc = &mut app.editor_mut().doc;
+        doc.select_all();
+        if text.is_empty() {
+            doc.delete_selection();
+        } else {
+            doc.insert_str(text);
+        }
+        doc.set_cursor(0);
     }
 
     fn add_demo_plugin(app: &mut App) {
@@ -2866,5 +3845,307 @@ mod tests {
     fn the_welcome_screen_mentions_the_config_file() {
         let app = empty_app();
         assert!(app.editor().doc.text().contains("config.toml"));
+    }
+
+    // --- Editing ergonomics ------------------------------------------------
+
+    #[test]
+    fn pairs_auto_close_and_skip_over() {
+        let mut app = empty_app();
+        set_text(&mut app, "");
+        app.handle_key(key(KeyCode::Char('(')));
+        assert_eq!(app.editor().doc.text(), "()");
+        assert_eq!(app.editor().doc.cursor(), 1);
+        // Typing the closer steps over the auto-inserted one.
+        app.handle_key(key(KeyCode::Char(')')));
+        assert_eq!(app.editor().doc.text(), "()");
+        assert_eq!(app.editor().doc.cursor(), 2);
+    }
+
+    #[test]
+    fn typing_a_quote_wraps_the_selection() {
+        let mut app = empty_app();
+        set_text(&mut app, "word");
+        app.editor_mut().doc.select_all();
+        app.handle_key(key(KeyCode::Char('"')));
+        assert_eq!(app.editor().doc.text(), "\"word\"");
+    }
+
+    #[test]
+    fn newline_between_braces_indents_and_opens_a_block() {
+        let mut app = empty_app();
+        set_text(&mut app, "");
+        app.handle_key(key(KeyCode::Char('{')));
+        assert_eq!(app.editor().doc.text(), "{}");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.editor().doc.text(), "{\n    \n}");
+        // The caret sits at the end of the freshly indented inner line.
+        let pos = app.editor().doc.cursor_position();
+        assert_eq!((pos.line, pos.col), (1, 4));
+    }
+
+    #[test]
+    fn duplicate_line_copies_the_current_line() {
+        let mut app = empty_app();
+        set_text(&mut app, "one\ntwo");
+        // Caret at the end of the second line.
+        app.editor_mut().doc.move_doc_end(false);
+        app.duplicate_line();
+        assert_eq!(app.editor().doc.text(), "one\ntwo\ntwo");
+        assert_eq!(app.editor().doc.cursor_position().line, 2);
+    }
+
+    #[test]
+    fn delete_line_removes_the_current_line() {
+        let mut app = empty_app();
+        set_text(&mut app, "one\ntwo\nthree");
+        app.editor_mut().doc.move_doc_end(false);
+        app.delete_line();
+        assert_eq!(app.editor().doc.text(), "one\ntwo");
+        assert_eq!(app.editor().doc.cursor_position().line, 1);
+    }
+
+    #[test]
+    fn move_line_down_swaps_with_the_next() {
+        let mut app = empty_app();
+        set_text(&mut app, "one\ntwo");
+        app.editor_mut().doc.move_doc_end(false); // on "two"
+        app.move_line_up();
+        assert_eq!(app.editor().doc.text(), "two\none");
+        assert_eq!(app.editor().doc.cursor_position().line, 0);
+    }
+
+    #[test]
+    fn toggle_comment_adds_and_removes_a_marker() {
+        let mut app = empty_app();
+        set_text(&mut app, "let x = 1;");
+        app.toggle_comment();
+        assert_eq!(app.editor().doc.text(), "// let x = 1;");
+        app.toggle_comment();
+        assert_eq!(app.editor().doc.text(), "let x = 1;");
+    }
+
+    #[test]
+    fn toggle_comment_uses_the_language_marker() {
+        let mut app = empty_app();
+        app.editor_mut().language = fast_text_syntax::LanguageId::Python;
+        set_text(&mut app, "x = 1");
+        app.toggle_comment();
+        assert_eq!(app.editor().doc.text(), "# x = 1");
+    }
+
+    #[test]
+    fn bracket_match_is_used_when_pairs_are_typed() {
+        let mut app = empty_app();
+        set_text(&mut app, "");
+        app.handle_key(key(KeyCode::Char('[')));
+        app.handle_key(key(KeyCode::Char(']')));
+        assert_eq!(app.editor().doc.text(), "[]");
+        assert_eq!(app.editor().doc.cursor(), 2);
+    }
+
+    // --- Macros ------------------------------------------------------------
+
+    #[test]
+    fn macro_records_and_replays() {
+        let mut app = empty_app();
+        set_text(&mut app, "");
+        app.handle_key(key(KeyCode::F(6)));
+        assert!(app.recording.is_some());
+        app.handle_key(key(KeyCode::Char('h')));
+        app.handle_key(key(KeyCode::Char('i')));
+        app.handle_key(key(KeyCode::F(6)));
+        assert!(app.recording.is_none());
+        assert_eq!(app.editor().doc.text(), "hi");
+        app.handle_key(key(KeyCode::F(7)));
+        assert_eq!(app.editor().doc.text(), "hihi");
+    }
+
+    #[test]
+    fn named_macro_is_saved_and_run_from_the_palette() {
+        let mut app = empty_app();
+        set_text(&mut app, "");
+        app.handle_key(key(KeyCode::F(6)));
+        app.handle_key(key(KeyCode::Char('x')));
+        app.handle_key(key(KeyCode::F(6)));
+        app.save_macro("tick");
+        assert!(app.command_titles().contains(&"Macro: tick".to_string()));
+        app.run_plugin_command("Macro: tick");
+        assert_eq!(app.editor().doc.text(), "xx");
+    }
+
+    // --- LSP conversions ---------------------------------------------------
+
+    #[test]
+    fn utf16_columns_account_for_surrogate_pairs() {
+        // One emoji is two UTF-16 units but a single character.
+        assert_eq!(utf16_to_char_col("a😀b", 0), 0);
+        assert_eq!(utf16_to_char_col("a😀b", 1), 1);
+        assert_eq!(utf16_to_char_col("a😀b", 3), 2);
+        assert_eq!(utf16_to_char_col("a😀b", 4), 3);
+    }
+
+    #[test]
+    fn lsp_ranges_convert_to_character_indices() {
+        let mut doc = Document::new();
+        doc.insert_str("one\ntw😀o\nthree");
+        let range = LspRange {
+            start: fast_text_lsp::LspPosition {
+                line: 1,
+                character: 0,
+            },
+            end: fast_text_lsp::LspPosition {
+                line: 1,
+                character: 5,
+            },
+        };
+        let (start, end) = lsp_range_to_chars(&doc, &range);
+        assert_eq!(start, 4);
+        assert_eq!(end, 8);
+        assert_eq!(doc.buffer().slice(start, end), "tw😀o");
+    }
+
+    // --- Find in files -----------------------------------------------------
+
+    #[test]
+    fn find_in_files_fills_the_picker() {
+        let dir = std::env::temp_dir().join(format!("ft-tui-fif-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "alpha\nneedle here\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "nothing to see\n").unwrap();
+
+        let mut app = empty_app();
+        app.sidebar.set_root(canonical(&dir));
+        app.open_find_in_files("needle");
+        assert!(app.picker.is_open());
+        assert_eq!(app.picker_kind, PickerKind::FindInFiles);
+        assert_eq!(app.picker.items().len(), 1);
+        // Enter jumps to the hit.
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.picker.is_open());
+        assert_eq!(app.editor().title(), "a.txt");
+        assert_eq!(app.editor().doc.cursor_position().line, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_in_files_query_typing_filters() {
+        let dir = std::env::temp_dir().join(format!("ft-tui-fifq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+
+        let mut app = empty_app();
+        app.sidebar.set_root(canonical(&dir));
+        app.run_plugin_command("Find in files…");
+        assert!(matches!(app.prompt, Prompt::FindInFiles { .. }));
+        for c in "alpha".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.picker.is_open());
+        assert_eq!(app.find_query, "alpha");
+        assert_eq!(app.picker.items().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn picker_escape_closes_without_jumping() {
+        let mut app = empty_app();
+        app.picker.open("Test", vec![PickerItem::new("row")]);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.picker.is_open());
+        assert!(matches!(app.picker_action, PickerAction::None));
+    }
+
+    #[test]
+    fn picker_rows_activate_on_enter() {
+        let mut app = empty_app();
+        app.picker_action = PickerAction::Locations(vec![JumpTarget {
+            path: PathBuf::from("missing.txt"),
+            line: 0,
+            col: 0,
+        }]);
+        app.picker
+            .open("Locations", vec![PickerItem::new("missing.txt")]);
+        app.handle_key(key(KeyCode::Enter));
+        // The picker closes and tries to open the target (which fails).
+        assert!(!app.picker.is_open());
+    }
+
+    #[test]
+    fn commands_are_exposed_in_the_palette() {
+        let app = empty_app();
+        let titles = app.command_titles();
+        for expected in [
+            "Find in files…",
+            "Document symbols",
+            "Rename symbol…",
+            "Format document",
+            "Code actions",
+            "Toggle comment",
+            "Duplicate line",
+            "Delete line",
+            "Move line up",
+            "Move line down",
+            "Record macro",
+            "Stop recording",
+            "Replay macro",
+            "Save macro…",
+        ] {
+            assert!(
+                titles.contains(&expected.to_string()),
+                "missing command: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_d_selects_the_next_occurrence() {
+        let mut app = empty_app();
+        clear_and_type(&mut app, "foo bar foo");
+        app.editor_mut().doc.set_cursor(1); // inside the first "foo"
+        app.select_next_occurrence(); // selects the word
+        assert!(app.editor().doc.has_selection());
+        app.select_next_occurrence(); // adds the following occurrence
+        assert!(app.editor().doc.has_multi_cursor());
+    }
+
+    #[test]
+    fn alt_up_moves_the_current_line() {
+        let mut app = empty_app();
+        set_text(&mut app, "one\ntwo");
+        app.editor_mut().doc.move_doc_end(false); // on "two"
+        let ev = KeyEvent::new(KeyCode::Up, KeyModifiers::ALT);
+        app.handle_key(ev);
+        assert_eq!(app.editor().doc.text(), "two\none");
+    }
+
+    #[test]
+    fn alt_shift_down_adds_a_secondary_caret() {
+        let mut app = empty_app();
+        set_text(&mut app, "one\ntwo");
+        assert!(!app.editor().doc.has_multi_cursor());
+        let ev = KeyEvent::new(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT);
+        app.handle_key(ev);
+        assert!(app.editor().doc.has_multi_cursor());
+    }
+
+    #[test]
+    fn bundled_plugins_load_without_errors() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
+        let manager = crate::plugin_manager::PluginManager::discover(vec![dir], None);
+        assert!(!manager.entries.is_empty(), "expected bundled plugins");
+        for entry in &manager.entries {
+            assert!(
+                entry.error.is_none(),
+                "{} failed to load: {:?}",
+                entry.name,
+                entry.error
+            );
+        }
     }
 }

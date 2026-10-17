@@ -12,7 +12,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use fast_text_lsp::{path_to_uri, CompletionItem, Diagnostic, Location, LspClient};
+use fast_text_lsp::{
+    path_to_uri, CodeAction, CompletionItem, Diagnostic, DocumentSymbol, Location, LspClient,
+    TextEdit, WorkspaceEdit,
+};
 use fast_text_syntax::LanguageId;
 
 use crate::app::Editor;
@@ -195,6 +198,62 @@ impl LspManager {
             .map_err(|e| e.to_string())
     }
 
+    /// Renames the symbol at the cursor.
+    pub fn rename(&self, ed: &Editor, new_name: &str) -> Result<WorkspaceEdit, String> {
+        let (session, uri, line, character) = self.locate(ed)?;
+        session
+            .client
+            .rename(&uri, line, character, new_name)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Formats the whole buffer.
+    pub fn format(&self, ed: &Editor) -> Result<Vec<TextEdit>, String> {
+        let (session, uri, _, _) = self.locate(ed)?;
+        session.client.formatting(&uri).map_err(|e| e.to_string())
+    }
+
+    /// Code actions at the cursor (or over the current selection).
+    pub fn code_actions(&self, ed: &Editor) -> Result<Vec<CodeAction>, String> {
+        if !self.is_active(ed.language) {
+            return Err("no language server is running for this buffer".into());
+        }
+        let Some(State::Ready(session)) = self.sessions.get(&ed.language) else {
+            return Err("no language server is running for this buffer".into());
+        };
+        if ed.is_untitled() {
+            return Err("no language server for untitled buffers".into());
+        }
+        let path = ed.doc.path().ok_or("buffer has no path")?;
+        let uri = path_to_uri(path);
+        let (start, end) = ed.doc.selection().range();
+        let start = lsp_position(ed, start);
+        let end = lsp_position(ed, end);
+        session
+            .client
+            .code_actions(&uri, start, end)
+            .map_err(|e| e.to_string())
+    }
+
+    /// The document outline.
+    pub fn document_symbols(&self, ed: &Editor) -> Result<Vec<DocumentSymbol>, String> {
+        if !self.is_active(ed.language) {
+            return Err("no language server is running for this buffer".into());
+        }
+        let Some(State::Ready(session)) = self.sessions.get(&ed.language) else {
+            return Err("no language server is running for this buffer".into());
+        };
+        if ed.is_untitled() {
+            return Err("no language server for untitled buffers".into());
+        }
+        let path = ed.doc.path().ok_or("buffer has no path")?;
+        let uri = path_to_uri(path);
+        session
+            .client
+            .document_symbols(&uri)
+            .map_err(|e| e.to_string())
+    }
+
     /// Resolves the session, URI, and UTF-16 position for the current cursor.
     #[allow(clippy::type_complexity)]
     fn locate(&self, ed: &Editor) -> Result<(&Session, String, u32, u32), String> {
@@ -209,10 +268,8 @@ impl LspManager {
         };
         let path = ed.doc.path().ok_or("buffer has no path")?;
         let uri = path_to_uri(path);
-        let pos = ed.doc.cursor_position();
-        let line_text = ed.doc.buffer().line_str(pos.line);
-        let character = utf16_col(&line_text, pos.col);
-        Ok((session, uri, pos.line as u32, character))
+        let (line, character) = lsp_position(ed, ed.doc.selection().head);
+        Ok((session, uri, line, character))
     }
 
     /// Shuts every server down.
@@ -250,6 +307,13 @@ fn utf16_col(line: &str, col_chars: usize) -> u32 {
         .take(col_chars)
         .map(|c| c.len_utf16() as u32)
         .sum()
+}
+
+/// The LSP `(line, character)` for a character index in a buffer.
+fn lsp_position(ed: &Editor, index: usize) -> (u32, u32) {
+    let pos = ed.doc.position_of(index);
+    let line_text = ed.doc.buffer().line_str(pos.line);
+    (pos.line as u32, utf16_col(&line_text, pos.col))
 }
 
 struct ServerSpec {

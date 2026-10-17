@@ -6,7 +6,9 @@
 
 pub mod app;
 pub mod config;
+pub mod find_in_files;
 pub mod lsp;
+pub mod picker;
 pub mod plugin_manager;
 pub mod sidebar;
 pub mod theme;
@@ -16,6 +18,7 @@ use std::ffi::OsString;
 use std::io::stdout;
 use std::path::PathBuf;
 
+use app::App;
 use config::Config;
 use fast_text_plugin::CursorStyle;
 use ratatui::backend::CrosstermBackend;
@@ -28,8 +31,6 @@ use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::Terminal;
-
-use app::App;
 
 /// Maps an editor cursor style to the terminal escape command for it.
 fn terminal_cursor(style: CursorStyle) -> SetCursorStyle {
