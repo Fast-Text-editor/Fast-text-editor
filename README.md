@@ -460,55 +460,6 @@ tracks text, selections, and history.
   table: a curated core plus 300+ entries generated from Helix, addressed by a
   cheap `Copy` `LanguageId` handle.
 
-## Status & roadmap
-
-Implemented today:
-
-- [x] Rope buffer, editing, undo/redo, selections, clipboard (internal)
-- [x] Goal-column cursor motion, word navigation, select-all
-- [x] Find with wrap-around, replace-all, go-to-line
-- [x] Syntax highlighting for **340+ languages**: a curated core (Rust,
-  JavaScript, TypeScript, Python, Ruby, Java, C, C++, C#, Go, HTML, CSS, JSON,
-  TOML, Markdown, Shell, TextWrite, plain text) plus a Helix-derived registry covering
-  Zig, Kotlin, Haskell, Scala, Clojure, Elixir, Dart, Lua, Perl, R, Julia, SQL,
-  YAML, XML, Vue, Svelte, Dockerfile, Make, Nix, HCL, GraphQL, and hundreds
-  more — including C/C++ headers (`.h`, `.hpp`, `.hh`, `.hxx`, `.h++`, `.ipp`,
-  `.tpp`, `.tcc`)
-- [x] `Ctrl+L` fuzzy language picker over the whole registry
-- [x] Multi-buffer tabs, cursorline highlight, status bar, minibuffer prompts,
-  help overlay
-- [x] A Visual-Studio-style folder explorer sidebar (`Ctrl+B`; `Ctrl+Shift+O`
-  to pick the root) with expand/collapse, hidden-file toggle, and keyboard,
-  mouse, and scroll-wheel navigation
-- [x] Tab switching (`Ctrl+Tab`, `Ctrl+PageUp`/`PageDown`) and closing, with
-  clickable tabs and `✕` close buttons
-- [x] Dark/light themes
-- [x] Rhai plugin system with a command palette and plugin keybindings
-- [x] LSP client: diagnostics, completion, hover, go-to-definition, with
-  Helix-derived server detection for 200+ server configs
-- [x] WebAssembly bindings + browser frontend (`web/`)
-- [x] Native desktop frontend (`fast-text-gui`, egui/eframe)
-- [x] TextWrite: a hand-written, dependency-free scripting language with a REPL,
-      CLI, closures, collections, and a standard library (`textwrite` / `tw`)
-- [x] TextWrite editor scripts: `.tw` files under `plugins/` register commands
-      and keybindings, and `Ctrl+E` evaluates a snippet in the running editor
-- [x] Scriptable cursor shape (bar / block / underline) from Rhai or TextWrite
-- [x] TextWrite `import` modules (built-in packages + `.tw` files) and a
-      `fast-text/automator` package for timed editor automations (`Alt+R`)
-- [x] Scriptable cursor shape (bar / block / underline), built in on `Alt+1`/`2`/`3`
-- [x] Visual-Studio-style plugin manager (`Ctrl+M` / `Alt+M`): lists every plugin
-      with its commands, keybindings, and load errors, and can enable, disable,
-      install, or uninstall them
-- [x] `config.toml` (cursor style, theme, explorer, LSP) plus fully custom
-      keybindings via `[keys]`, reloadable from the palette
-- [x] Universal `install.sh`: prebuilt releases with a source-build fallback,
-      shell completions, and `--uninstall`
-- [x] 211 automated tests (core, syntax, plugins, LSP, wasm, GUI, TUI, TextWrite)
-
-Planned:
-
-- [ ] Signed releases and prebuilt binaries
-
 ## License
 
 MIT
