@@ -10,5 +10,8 @@ mod protocol;
 mod transport;
 
 pub use client::{path_to_uri, uri_to_path, LspClient, LspError};
-pub use protocol::{CompletionItem, Diagnostic, Location, LspPosition, LspRange, Severity};
+pub use protocol::{
+    CodeAction, CompletionItem, Diagnostic, DocumentSymbol, Location, LspPosition, LspRange,
+    Severity, TextEdit, WorkspaceEdit,
+};
 pub use transport::{encode_message, write_message, Transport};

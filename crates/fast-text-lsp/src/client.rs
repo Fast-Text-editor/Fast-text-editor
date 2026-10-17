@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::protocol::{CompletionItem, Diagnostic, Location};
+use crate::protocol::{
+    CodeAction, CompletionItem, Diagnostic, DocumentSymbol, Location, LspRange, TextEdit,
+    WorkspaceEdit,
+};
 use crate::transport::{write_message, Transport};
 
 /// Errors from the LSP client.
@@ -128,7 +131,11 @@ impl LspClient {
                     "completion": { "completionItem": { "snippetSupport": false } },
                     "hover": { "contentFormat": ["plaintext", "markdown"] },
                     "publishDiagnostics": {},
-                    "definition": {}
+                    "definition": {},
+                    "rename": { "prepareSupport": false },
+                    "formatting": {},
+                    "codeAction": { "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [] } } },
+                    "documentSymbol": { "hierarchicalDocumentSymbolSupport": true }
                 }
             },
             "workspaceFolders": [ { "uri": root_uri, "name": "workspace" } ]
@@ -227,6 +234,74 @@ impl LspClient {
             other => other,
         };
         Ok(serde_json::from_value(value).ok())
+    }
+
+    /// Asks the server to rename the symbol at a position.
+    pub fn rename(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+        new_name: &str,
+    ) -> Result<WorkspaceEdit, LspError> {
+        let result = self.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "newName": new_name
+            }),
+        )?;
+        normalise_workspace_edit(result)
+    }
+
+    /// Asks the server to format a whole document.
+    pub fn formatting(&self, uri: &str) -> Result<Vec<TextEdit>, LspError> {
+        let result = self.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": uri },
+                "options": { "tabSize": 4, "insertSpaces": true }
+            }),
+        )?;
+        Ok(serde_json::from_value(result).unwrap_or_default())
+    }
+
+    /// Code actions offered for a range.
+    pub fn code_actions(
+        &self,
+        uri: &str,
+        start: (u32, u32),
+        end: (u32, u32),
+    ) -> Result<Vec<CodeAction>, LspError> {
+        let result = self.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 }
+                },
+                "context": { "diagnostics": [] }
+            }),
+        )?;
+        let items = match result {
+            Value::Array(items) => items,
+            _ => Vec::new(),
+        };
+        Ok(items
+            .into_iter()
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect())
+    }
+
+    /// The document outline.
+    pub fn document_symbols(&self, uri: &str) -> Result<Vec<DocumentSymbol>, LspError> {
+        let result = self.request(
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": uri } }),
+        )?;
+        Ok(flatten_symbols(&result, None))
     }
 
     /// Diagnostics for a document URI, if any have been published.
@@ -347,6 +422,115 @@ fn extract_hover(result: &Value) -> Option<String> {
     }
 }
 
+/// Accepts either `changes` or `documentChanges` from a rename response.
+fn normalise_workspace_edit(result: Value) -> Result<WorkspaceEdit, LspError> {
+    if result.is_null() {
+        return Ok(WorkspaceEdit::default());
+    }
+    if let Ok(edit) = serde_json::from_value::<WorkspaceEdit>(result.clone()) {
+        if !edit.is_empty() {
+            return Ok(edit);
+        }
+    }
+    // `documentChanges` is an array of `TextDocumentEdit`s.
+    let mut edit = WorkspaceEdit::default();
+    if let Some(changes) = result.get("documentChanges").and_then(Value::as_array) {
+        for change in changes {
+            let Some(uri) = change
+                .get("textDocument")
+                .and_then(|d| d.get("uri"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let edits: Vec<TextEdit> = change
+                .get("edits")
+                .and_then(Value::as_array)
+                .map(|edits| {
+                    edits
+                        .iter()
+                        .filter_map(|e| serde_json::from_value(e.clone()).ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            edit.changes
+                .entry(uri.to_string())
+                .or_default()
+                .extend(edits);
+        }
+    }
+    Ok(edit)
+}
+
+/// Flattens a `documentSymbol` result into a flat outline.
+///
+/// Servers answer with either hierarchical `DocumentSymbol[]` (with `children`)
+/// or a flat `SymbolInformation[]` (with `location`). Both are accepted.
+fn flatten_symbols(value: &Value, uri: Option<&str>) -> Vec<DocumentSymbol> {
+    let mut out = Vec::new();
+    let Some(items) = value.as_array() else {
+        return out;
+    };
+    for item in items {
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let kind = item.get("kind").and_then(Value::as_u64).map(|k| k as u8);
+        let detail = item
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+
+        // A flat `SymbolInformation` carries its own location.
+        if let Some(location) = item.get("location") {
+            let item_uri = location
+                .get("uri")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| uri.map(str::to_string));
+            if let Some(range) = location.get("range").and_then(parse_range) {
+                out.push(DocumentSymbol {
+                    name,
+                    detail,
+                    kind,
+                    uri: item_uri,
+                    range,
+                });
+                continue;
+            }
+        }
+
+        // Hierarchical: `selectionRange` is the better jump target.
+        let range = item
+            .get("selectionRange")
+            .or_else(|| item.get("range"))
+            .and_then(parse_range);
+        if let Some(range) = range {
+            out.push(DocumentSymbol {
+                name: name.clone(),
+                detail,
+                kind,
+                uri: uri.map(str::to_string),
+                range,
+            });
+        }
+        if let Some(children) = item.get("children") {
+            out.extend(flatten_symbols(children, uri));
+        }
+    }
+    out
+}
+
+/// Parses a `{ start: { line, character }, end: … }` value.
+fn parse_range(value: &Value) -> Option<LspRange> {
+    serde_json::from_value(value.clone()).ok()
+}
+
 /// Converts a filesystem path into a `file://` URI.
 pub fn path_to_uri(path: &Path) -> String {
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -356,4 +540,76 @@ pub fn path_to_uri(path: &Path) -> String {
 /// Converts a `file://` URI back into a filesystem path.
 pub fn uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     uri.strip_prefix("file://").map(std::path::PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn range(line: u64, character: u64) -> Value {
+        json!({ "start": { "line": line, "character": character },
+                "end": { "line": line, "character": character + 1 } })
+    }
+
+    #[test]
+    fn flattens_hierarchical_document_symbols() {
+        let result = json!([{
+            "name": "struct Point",
+            "kind": 23,
+            "range": range(0, 0),
+            "selectionRange": range(0, 7),
+            "children": [{ "name": "x", "kind": 8, "range": range(1, 4), "selectionRange": range(1, 4) }]
+        }]);
+        let symbols = flatten_symbols(&result, Some("file:///a.rs"));
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, "struct Point");
+        assert_eq!(symbols[0].range.start.character, 7, "selection range wins");
+        assert_eq!(symbols[1].name, "x");
+        assert_eq!(symbols[1].uri.as_deref(), Some("file:///a.rs"));
+    }
+
+    #[test]
+    fn flattens_flat_symbol_information() {
+        let result = json!([{
+            "name": "main",
+            "kind": 12,
+            "location": { "uri": "file:///b.rs", "range": range(3, 0) }
+        }]);
+        let symbols = flatten_symbols(&result, Some("file:///ignored.rs"));
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].uri.as_deref(), Some("file:///b.rs"));
+        assert_eq!(symbols[0].range.start.line, 3);
+    }
+
+    #[test]
+    fn workspace_edit_reads_changes_and_document_changes() {
+        let with_changes = normalise_workspace_edit(json!({
+            "changes": { "file:///a.rs": [{ "range": range(0, 0), "newText": "b" }] }
+        }))
+        .unwrap();
+        assert_eq!(with_changes.len(), 1);
+        assert_eq!(with_changes.changes["file:///a.rs"][0].new_text, "b");
+
+        let with_document_changes = normalise_workspace_edit(json!({
+            "documentChanges": [{
+                "textDocument": { "uri": "file:///c.rs", "version": 3 },
+                "edits": [{ "range": range(1, 2), "newText": "z" }]
+            }]
+        }))
+        .unwrap();
+        assert_eq!(with_document_changes.len(), 1);
+        assert_eq!(
+            with_document_changes.changes["file:///c.rs"][0]
+                .range
+                .start
+                .line,
+            1
+        );
+    }
+
+    #[test]
+    fn an_empty_rename_response_is_an_empty_edit() {
+        assert!(normalise_workspace_edit(Value::Null).unwrap().is_empty());
+    }
 }

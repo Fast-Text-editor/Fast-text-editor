@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 /// An LSP position (0-based line and UTF-16 code-unit character offset).
@@ -119,4 +121,76 @@ impl CompletionItem {
 pub struct Location {
     pub uri: String,
     pub range: LspRange,
+}
+
+/// A text edit returned by formatting, rename or a code action.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TextEdit {
+    pub range: LspRange,
+    #[serde(rename = "newText")]
+    pub new_text: String,
+}
+
+/// A set of edits across several documents.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkspaceEdit {
+    /// `uri -> edits`. Servers that only return `documentChanges` are ignored.
+    #[serde(default)]
+    pub changes: HashMap<String, Vec<TextEdit>>,
+}
+
+impl WorkspaceEdit {
+    /// True when there is nothing to apply.
+    pub fn is_empty(&self) -> bool {
+        self.changes.values().all(|edits| edits.is_empty())
+    }
+
+    /// Total number of edits in the workspace edit.
+    pub fn len(&self) -> usize {
+        self.changes.values().map(Vec::len).sum()
+    }
+}
+
+/// An action the server offers at a position.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodeAction {
+    pub title: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub edit: Option<WorkspaceEdit>,
+}
+
+/// One entry in the document outline.
+#[derive(Debug, Clone)]
+pub struct DocumentSymbol {
+    pub name: String,
+    pub detail: Option<String>,
+    pub kind: Option<u8>,
+    /// The document the symbol lives in (flat `SymbolInformation` only).
+    pub uri: Option<String>,
+    /// Where the symbol starts (its selection range when the server gives one).
+    pub range: LspRange,
+}
+
+impl DocumentSymbol {
+    /// A single-character badge roughly matching the LSP symbol kinds.
+    pub fn kind_badge(&self) -> &'static str {
+        match self.kind {
+            Some(1) => "M",  // module / file
+            Some(2) => "n",  // namespace
+            Some(3) => "m",  // package
+            Some(5) => "C",  // class
+            Some(6) => "m",  // method
+            Some(7) => "p",  // property
+            Some(8) => "F",  // field
+            Some(9) => "c",  // constructor
+            Some(10) => "e", // enum
+            Some(11) => "I", // interface
+            Some(12) => "f", // function
+            Some(13) => "v", // variable
+            Some(14) => "K", // constant
+            _ => " ",
+        }
+    }
 }

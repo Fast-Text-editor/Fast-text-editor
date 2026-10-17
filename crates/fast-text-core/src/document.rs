@@ -15,6 +15,10 @@ pub struct Document {
     buffer: Buffer,
     history: History,
     selection: Selection,
+    /// Additional carets/selections for multi-cursor editing. The primary
+    /// selection stays in `selection`; these are always kept sorted and
+    /// non-overlapping with it.
+    extra: Vec<Selection>,
     /// Sticky column for vertical movement.
     goal_col: Option<usize>,
 }
@@ -23,6 +27,17 @@ impl Default for Document {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// How a multi-cursor deletion treats a collapsed caret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MultiMode {
+    /// Delete the character before each collapsed caret.
+    Backward,
+    /// Delete the character after each collapsed caret.
+    Forward,
+    /// Only delete ranged selections; leave collapsed carets in place.
+    SelectionOnly,
 }
 
 impl Document {
@@ -34,6 +49,7 @@ impl Document {
             buffer: Buffer::new(),
             history: History::default(),
             selection: Selection::caret(0),
+            extra: Vec::new(),
             goal_col: None,
         }
     }
@@ -45,6 +61,7 @@ impl Document {
             buffer: Buffer::from_str(text),
             history: History::default(),
             selection: Selection::caret(0),
+            extra: Vec::new(),
             goal_col: None,
         }
     }
@@ -55,6 +72,7 @@ impl Document {
             buffer: Buffer::from_file(path)?,
             history: History::default(),
             selection: Selection::caret(0),
+            extra: Vec::new(),
             goal_col: None,
         })
     }
@@ -85,6 +103,7 @@ impl Document {
         let mut s = selection;
         s.clamp(self.buffer.max_char_idx());
         self.selection = s;
+        self.extra.clear();
         self.goal_col = None;
     }
 
@@ -159,6 +178,7 @@ impl Document {
 
     pub fn select_all(&mut self) {
         self.selection = Selection::new(0, self.buffer.max_char_idx());
+        self.extra.clear();
         self.goal_col = None;
     }
 
@@ -169,13 +189,302 @@ impl Document {
     pub fn collapse_selection(&mut self) {
         let head = self.selection.head;
         self.selection = Selection::caret(head);
+        self.extra.clear();
+    }
+
+    // --- Multi-cursor ------------------------------------------------------
+
+    /// The secondary selections, sorted by position. Empty for a single caret.
+    pub fn extra_selections(&self) -> &[Selection] {
+        &self.extra
+    }
+
+    /// True when more than one caret/selection is active.
+    pub fn has_multi_cursor(&self) -> bool {
+        !self.extra.is_empty()
+    }
+
+    /// Every selection, primary first.
+    pub fn selections(&self) -> Vec<Selection> {
+        std::iter::once(self.selection)
+            .chain(self.extra.iter().copied())
+            .collect()
+    }
+
+    /// Drops every secondary selection, keeping the primary caret.
+    pub fn clear_extra_selections(&mut self) {
+        self.extra.clear();
+    }
+
+    /// Adds a collapsed caret at `at` (clamped, de-duplicated, sorted).
+    pub fn add_caret(&mut self, at: usize) {
+        let at = at.min(self.buffer.max_char_idx());
+        if at == self.selection.head || self.extra.iter().any(|s| s.head == at) {
+            return;
+        }
+        self.extra.push(Selection::caret(at));
+        self.extra.sort_by_key(|s| s.range().0);
+    }
+
+    /// Adds a caret one line above the topmost caret (same column).
+    pub fn add_caret_above(&mut self) {
+        let top = self
+            .selections()
+            .into_iter()
+            .min_by_key(|s| s.range().0)
+            .unwrap_or(self.selection);
+        self.add_caret_relative(top, -1);
+    }
+
+    /// Adds a caret one line below the bottommost caret (same column).
+    pub fn add_caret_below(&mut self) {
+        let bottom = self
+            .selections()
+            .into_iter()
+            .max_by_key(|s| s.range().1)
+            .unwrap_or(self.selection);
+        self.add_caret_relative(bottom, 1);
+    }
+
+    fn add_caret_relative(&mut self, from: Selection, delta: i64) {
+        let pos = self.position_of(from.head);
+        let line = pos.line as i64 + delta;
+        if line < 0 || line as usize >= self.buffer.len_lines() {
+            return;
+        }
+        let col = pos.col.min(self.buffer.line_len_chars(line as usize));
+        let at = self.index_of(Position::new(line as usize, col));
+        self.add_caret(at);
+    }
+
+    /// `Ctrl+D`: selects the word under the caret, then each next occurrence.
+    ///
+    /// The first call selects the word at the caret; later calls extend the
+    /// multi-selection to the following occurrence of the same text. Returns
+    /// false when there is nothing more to select.
+    pub fn select_next_occurrence(&mut self, case_sensitive: bool) -> bool {
+        let (start, end) = self.selection.range();
+        if start == end {
+            let Some((ws, we)) = self.word_at_index(self.selection.head) else {
+                return false;
+            };
+            self.selection = Selection::new(ws, we);
+            self.goal_col = None;
+            return true;
+        }
+        let needle = self.buffer.slice(start, end);
+        let from = self
+            .selections()
+            .into_iter()
+            .map(|s| s.range().1)
+            .max()
+            .unwrap_or(end);
+        match search::find_literal(
+            &self.buffer,
+            &needle,
+            from,
+            SearchDirection::Forward,
+            case_sensitive,
+            false,
+        ) {
+            Some(m) => {
+                self.extra.push(Selection::new(m.start, m.end));
+                self.extra.sort_by_key(|s| s.range().0);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Character bounds of the word at `at`, or `None` when it is not on a word.
+    fn word_at_index(&self, at: usize) -> Option<(usize, usize)> {
+        let n = self.buffer.max_char_idx();
+        if n == 0 {
+            return None;
+        }
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let probe = if self.buffer.char_at(at).is_some_and(is_word) {
+            at
+        } else if at > 0 && self.buffer.char_at(at - 1).is_some_and(is_word) {
+            at - 1
+        } else {
+            return None;
+        };
+        let mut s = probe;
+        while s > 0 && self.buffer.char_at(s - 1).is_some_and(is_word) {
+            s -= 1;
+        }
+        let mut e = probe + 1;
+        while e < n && self.buffer.char_at(e).is_some_and(is_word) {
+            e += 1;
+        }
+        Some((s, e))
+    }
+
+    /// The text of the word under the caret, if any (used for rename).
+    pub fn word_under_cursor(&self) -> Option<String> {
+        let (s, e) = self.word_at_index(self.selection.head)?;
+        Some(self.buffer.slice(s, e))
+    }
+
+    /// Applies `(start, end, replacement)` character-range edits as one
+    /// undoable transaction. Edits may be given in any order but must not
+    /// overlap.
+    pub fn apply_edits(&mut self, edits: &[(usize, usize, String)]) {
+        if self.buffer.is_read_only() || edits.is_empty() {
+            return;
+        }
+        let mut ordered: Vec<(usize, usize, &String)> =
+            edits.iter().map(|(s, e, t)| (*s, *e, t)).collect();
+        ordered.sort_by_key(|e| std::cmp::Reverse(e.0));
+        let before = self.selection;
+        let mut txn = Transaction::new(TxnKind::Other, before);
+        let mut caret = None;
+        for (start, end, text) in ordered {
+            let start = start.min(self.buffer.max_char_idx());
+            let end = end.min(self.buffer.max_char_idx()).max(start);
+            if start < end {
+                let removed = self.buffer.remove(start, end);
+                txn.edits.push(Edit::Delete {
+                    at: start,
+                    text: removed,
+                });
+            }
+            if !text.is_empty() {
+                self.buffer.insert(start, text);
+                txn.edits.push(Edit::Insert {
+                    at: start,
+                    text: text.clone(),
+                });
+            }
+            caret = Some(start + text.chars().count());
+        }
+        self.selection = Selection::caret(caret.unwrap_or(before.head));
+        self.extra.clear();
+        self.goal_col = None;
+        self.commit(txn, false);
     }
 
     // --- Editing commands --------------------------------------------------
 
+    fn multi_insert(&mut self, text: &str) {
+        let sels = self.selections();
+        let mut order: Vec<usize> = (0..sels.len()).collect();
+        // Edit from the end backwards so earlier indices stay valid.
+        order.sort_by_key(|&i| std::cmp::Reverse(sels[i].range().0));
+
+        let before = self.selection;
+        let mut txn = Transaction::new(TxnKind::Insert, before);
+        if sels.iter().any(|s| !s.is_empty()) {
+            txn.kind = TxnKind::Other;
+        }
+        let inserted = text.chars().count();
+        let mut positions: Vec<Option<usize>> = vec![None; sels.len()];
+        let mut limit = usize::MAX;
+        for &i in &order {
+            let (s, e) = sels[i].range();
+            if e > limit {
+                continue; // overlaps a selection already edited
+            }
+            if s != e {
+                let removed = self.buffer.remove(s, e);
+                txn.edits.push(Edit::Delete {
+                    at: s,
+                    text: removed,
+                });
+            }
+            self.buffer.insert(s, text);
+            txn.edits.push(Edit::Insert {
+                at: s,
+                text: text.to_string(),
+            });
+            positions[i] = Some(s + inserted);
+            limit = limit.min(s);
+        }
+        self.apply_multi_positions(positions);
+        self.goal_col = None;
+        self.commit(txn, false);
+    }
+
+    /// Deletes at every selection in one transaction.
+    fn multi_delete(&mut self, mode: MultiMode) {
+        let sels = self.selections();
+        let mut order: Vec<usize> = (0..sels.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(sels[i].range().0));
+
+        let before = self.selection;
+        let mut txn = Transaction::new(TxnKind::Delete, before);
+        let mut positions: Vec<Option<usize>> = vec![None; sels.len()];
+        let mut limit = usize::MAX;
+        for &i in &order {
+            let (s, e) = sels[i].range();
+            if e > limit {
+                continue;
+            }
+            if s != e {
+                let removed = self.buffer.remove(s, e);
+                txn.edits.push(Edit::Delete {
+                    at: s,
+                    text: removed,
+                });
+                positions[i] = Some(s);
+            } else if mode == MultiMode::Backward && s > 0 {
+                let removed = self.buffer.remove(s - 1, s);
+                txn.edits.push(Edit::Delete {
+                    at: s - 1,
+                    text: removed,
+                });
+                positions[i] = Some(s - 1);
+            } else if mode == MultiMode::Forward && s < self.buffer.max_char_idx() {
+                let removed = self.buffer.remove(s, s + 1);
+                txn.edits.push(Edit::Delete {
+                    at: s,
+                    text: removed,
+                });
+                positions[i] = Some(s);
+            } else {
+                positions[i] = Some(s);
+            }
+            limit = limit.min(s);
+        }
+        if txn.edits.is_empty() {
+            return;
+        }
+        self.apply_multi_positions(positions);
+        self.goal_col = None;
+        self.commit(txn, false);
+    }
+
+    /// Sets the primary caret and the secondary carets from per-selection
+    /// positions, dropping overlaps and duplicates.
+    fn apply_multi_positions(&mut self, positions: Vec<Option<usize>>) {
+        let max = self.buffer.max_char_idx();
+        let primary = positions
+            .first()
+            .copied()
+            .flatten()
+            .unwrap_or(self.selection.head)
+            .min(max);
+        self.selection = Selection::caret(primary);
+        let mut extras: Vec<usize> = positions
+            .into_iter()
+            .skip(1)
+            .flatten()
+            .map(|p| p.min(max))
+            .filter(|&p| p != primary)
+            .collect();
+        extras.sort_unstable();
+        extras.dedup();
+        self.extra = extras.into_iter().map(Selection::caret).collect();
+    }
+
     /// Inserts `text` at the caret, replacing any selection.
     pub fn insert_str(&mut self, text: &str) {
         if self.buffer.is_read_only() || text.is_empty() {
+            return;
+        }
+        if self.has_multi_cursor() {
+            self.multi_insert(text);
             return;
         }
         let mut txn = Transaction::new(TxnKind::Insert, self.selection);
@@ -237,6 +546,10 @@ impl Document {
         if self.buffer.is_read_only() {
             return;
         }
+        if self.has_multi_cursor() {
+            self.multi_insert(ending);
+            return;
+        }
         let mut txn = Transaction::new(TxnKind::Insert, self.selection);
         if !self.selection.is_empty() {
             let (s, e) = self.selection.range();
@@ -269,6 +582,10 @@ impl Document {
         if self.buffer.is_read_only() {
             return;
         }
+        if self.has_multi_cursor() {
+            self.multi_delete(MultiMode::Backward);
+            return;
+        }
         if !self.selection.is_empty() {
             self.delete_selection();
             return;
@@ -293,6 +610,10 @@ impl Document {
         if self.buffer.is_read_only() {
             return;
         }
+        if self.has_multi_cursor() {
+            self.multi_delete(MultiMode::Forward);
+            return;
+        }
         if !self.selection.is_empty() {
             self.delete_selection();
             return;
@@ -311,7 +632,15 @@ impl Document {
 
     /// Deletes the current selection.
     pub fn delete_selection(&mut self) {
-        if self.selection.is_empty() || self.buffer.is_read_only() {
+        if self.buffer.is_read_only() {
+            return;
+        }
+        if self.has_multi_cursor() {
+            // Only drop the ranges; a collapsed extra caret stays put.
+            self.multi_delete(MultiMode::SelectionOnly);
+            return;
+        }
+        if self.selection.is_empty() {
             return;
         }
         let (s, e) = self.selection.range();
@@ -371,6 +700,7 @@ impl Document {
             txn.revert(&mut self.buffer);
             self.selection = txn.before;
             self.selection.clamp(self.buffer.max_char_idx());
+            self.extra.clear();
             self.goal_col = None;
         }
     }
@@ -380,6 +710,7 @@ impl Document {
             txn.apply(&mut self.buffer);
             self.selection = txn.after;
             self.selection.clamp(self.buffer.max_char_idx());
+            self.extra.clear();
             self.goal_col = None;
         }
     }
@@ -392,6 +723,7 @@ impl Document {
             self.selection.head = target;
         } else {
             self.selection = Selection::caret(target);
+            self.extra.clear();
         }
         self.goal_col = None;
     }
@@ -402,6 +734,7 @@ impl Document {
             self.selection.head = target;
         } else {
             self.selection = Selection::caret(target);
+            self.extra.clear();
         }
     }
 
@@ -430,6 +763,9 @@ impl Document {
     }
 
     pub fn move_up(&mut self, extend: bool) {
+        if !extend {
+            self.extra.clear();
+        }
         let pos = self.position_of(self.selection.head);
         let goal = *self.goal_col.get_or_insert(pos.col);
         if pos.line > 0 {
@@ -441,6 +777,9 @@ impl Document {
     }
 
     pub fn move_down(&mut self, extend: bool) {
+        if !extend {
+            self.extra.clear();
+        }
         let pos = self.position_of(self.selection.head);
         let goal = *self.goal_col.get_or_insert(pos.col);
         if pos.line + 1 < self.buffer.len_lines() {
