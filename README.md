@@ -4,6 +4,18 @@ A fast, modern text editor written in Rust. Fast Text is built as a **Cargo
 workspace** with a single powerful engine and thin frontends layered on top, so
 the editor behaves identically everywhere.
 
+## Quick start
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/install.sh | sh
+```
+
+That installs the editor (`fast-text`, `ft`) and the TextWrite language
+(`textwrite`, `tw`) — see [Install](#install) for the flags and
+[Building and running](#building-and-running) to build from source instead.
+
+## Layout
+
 ```
 fast-text/
 ├── crates/
