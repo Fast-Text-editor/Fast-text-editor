@@ -70,6 +70,6 @@ fn duplicate_line_edits_the_document() {
 fn keybindings_from_example_are_registered() {
     let mut host = PluginHost::new();
     host.add_plugin("example.rhai", EXAMPLE);
-    let key = fast_text_plugin::KeySpec::parse("ctrl+shift+d").unwrap();
-    assert_eq!(host.lookup_key(&key).as_deref(), Some("Duplicate line"));
+    let key = fast_text_plugin::KeySpec::parse("ctrl+shift+q").unwrap();
+    assert_eq!(host.lookup_key(&key).as_deref(), Some("Wrap in quotes"));
 }

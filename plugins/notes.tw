@@ -1,0 +1,26 @@
+# TextWrite plugin: quick note-taking helpers for Fast Text.
+
+fn insert_todo() {
+    insert("TODO: ")
+}
+command_with_desc("Insert TODO", "Insert a TODO marker at the caret", "insert_todo")
+
+fn insert_fixme() {
+    insert("FIXME: ")
+}
+command_with_desc("Insert FIXME", "Insert a FIXME marker at the caret", "insert_fixme")
+
+fn insert_divider() {
+    let line = ""
+    repeat 60 times {
+        line += "-"
+    }
+    insert("\n" + line + "\n")
+}
+command_with_desc("Insert divider", "Insert a horizontal rule on its own line", "insert_divider")
+
+fn insert_checkbox() {
+    move_caret("line_start", false)
+    insert("- [ ] ")
+}
+command_with_desc("Insert checkbox", "Start the current line with an unchecked box", "insert_checkbox")

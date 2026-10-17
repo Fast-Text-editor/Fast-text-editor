@@ -17,7 +17,8 @@ fn duplicate_line() {
     insert("\n" + line_text);
 }
 command_with_desc("Duplicate line", "Duplicate the current line", "duplicate_line");
-bind("ctrl+shift+d", "Duplicate line");
+// No default keybinding: Shift+Ctrl+D is a built-in now. Bind your own in
+// config.toml or here if you prefer this implementation.
 
 fn trim_trailing_whitespace() {
     if !has_selection {

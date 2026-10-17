@@ -1,0 +1,115 @@
+# TextWrite plugin: text transformations for Fast Text.
+#
+# Drop `.tw` files in `plugins/` (next to the binary) or in
+# ~/.config/fast-text/plugins/ and restart. Ctrl+P lists every command.
+#
+# Editor globals available here: cursor, selection_start, selection_end,
+# has_selection, selected_text, line, col, doc_len, line_count, file_name,
+# language.
+
+# --- Case ------------------------------------------------------------------
+
+fn upper_selection() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = upper(selected_text)
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Upper case selection", "Upper-case the selected text", "upper_selection")
+
+fn lower_selection() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = lower(selected_text)
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Lower case selection", "Lower-case the selected text", "lower_selection")
+
+fn title_case_selection() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = map(words(selected_text), fn(w) {
+        return upper(slice(w, 0, 1)) + slice(w, 1, len(w))
+    })
+    delete_selection()
+    insert(join(out, " "))
+}
+command_with_desc("Title case selection", "Capitalise each word of the selection", "title_case_selection")
+
+# --- Lines -----------------------------------------------------------------
+
+fn sort_selected_lines() {
+    if not has_selection {
+        message("Select the lines to sort first")
+        return
+    }
+    let out = join(sort(lines(selected_text)), "\n")
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Sort selected lines", "Sort the selected lines alphabetically", "sort_selected_lines")
+
+fn reverse_selected_lines() {
+    if not has_selection {
+        message("Select the lines to reverse first")
+        return
+    }
+    let out = join(reverse(lines(selected_text)), "\n")
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Reverse selected lines", "Reverse the order of the selected lines", "reverse_selected_lines")
+
+fn dedupe_selected_lines() {
+    if not has_selection {
+        message("Select the lines to de-duplicate first")
+        return
+    }
+    let seen = {}
+    let kept = []
+    for line in lines(selected_text) {
+        if has(seen, line) {
+            continue
+        }
+        seen[line] = true
+        push(kept, line)
+    }
+    delete_selection()
+    insert(join(kept, "\n"))
+}
+command_with_desc("Remove duplicate lines", "Drop repeated lines from the selection", "dedupe_selected_lines")
+
+fn number_selected_lines() {
+    if not has_selection {
+        message("Select the lines to number first")
+        return
+    }
+    let n = 0
+    let numbered = []
+    for line in lines(selected_text) {
+        n += 1
+        push(numbered, "{n}: {line}")
+    }
+    delete_selection()
+    insert(join(numbered, "\n"))
+}
+command_with_desc("Number selected lines", "Prefix each selected line with its number", "number_selected_lines")
+
+# --- Info ------------------------------------------------------------------
+
+fn word_count() {
+    if has_selection {
+        message("Selection: {len(words(selected_text))} words, {len(selected_text)} characters")
+    } else {
+        message("Document: {line_count} lines, {doc_len} characters")
+    }
+}
+command_with_desc("Word count", "Count words in the selection or show document stats", "word_count")

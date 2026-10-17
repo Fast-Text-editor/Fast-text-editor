@@ -1,0 +1,73 @@
+# TextWrite plugin: Markdown writing helpers for Fast Text.
+#
+# Commands are listed in Ctrl+P. Bind your own keys in config.toml:
+#   [keys]
+#   alt+h = "Markdown: heading"
+
+fn wrap(prefix, suffix) {
+    if has_selection {
+        let text = selected_text
+        delete_selection()
+        insert(prefix + text + suffix)
+    } else {
+        insert(prefix + suffix)
+    }
+}
+
+fn heading() {
+    move_caret("line_start", false)
+    insert("## ")
+}
+command_with_desc("Markdown: heading", "Start the current line with a heading", "heading")
+
+fn bold() {
+    wrap("**", "**")
+}
+command_with_desc("Markdown: bold", "Wrap the selection in ** **", "bold")
+
+fn italic() {
+    wrap("_", "_")
+}
+command_with_desc("Markdown: italic", "Wrap the selection in _ _", "italic")
+
+fn inline_code() {
+    wrap("`", "`")
+}
+command_with_desc("Markdown: code", "Wrap the selection in backticks", "inline_code")
+
+fn link() {
+    if has_selection {
+        let text = selected_text
+        delete_selection()
+        insert("[{text}](url)")
+    } else {
+        insert("[](url)")
+    }
+}
+command_with_desc("Markdown: link", "Turn the selection into a Markdown link", "link")
+
+fn task_item() {
+    move_caret("line_start", false)
+    insert("- [ ] ")
+}
+command_with_desc("Markdown: task", "Prefix the line with a task checkbox", "task_item")
+
+fn bullet_list() {
+    if not has_selection {
+        move_caret("line_start", false)
+        insert("- ")
+        return
+    }
+    let items = map(lines(selected_text), fn(l) {
+        return "- " + l
+    })
+    delete_selection()
+    insert(join(items, "\n"))
+}
+command_with_desc("Markdown: bullet list", "Turn the selection into a bullet list", "bullet_list")
+
+fn quote() {
+    move_caret("line_start", false)
+    insert("> ")
+}
+command_with_desc("Markdown: block quote", "Prefix the line with a block quote marker", "quote")
