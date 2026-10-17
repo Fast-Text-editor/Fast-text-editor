@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// A key, independent of any particular terminal backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyName {
     Char(char),
     Left,
@@ -22,7 +22,7 @@ pub enum KeyName {
 }
 
 /// A key plus its modifier state, as written in a plugin, e.g. `ctrl+shift+k`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeySpec {
     pub ctrl: bool,
     pub alt: bool,

@@ -19,6 +19,7 @@ fast-text/
 ├── tools/gen_langs.py     # generates the language registry from Helix
 ├── plugins/               # example Rhai plugins (loaded at startup)
 ├── web/                   # browser frontend (see web/README.md)
+├── install.sh             # universal installer: prebuilt release or source build
 ```
 
 ## Why this shape
@@ -59,6 +60,33 @@ empty buffer named `notes.py`, highlighted according to the file name, ready for
 `Ctrl+S` to write it. Run `ft` with no arguments to see the Rust welcome buffer
 instead.
 
+## Install
+
+One self-contained shell script installs the editor, the TextWrite language and,
+optionally, the desktop app. It uses a prebuilt release when one exists for your
+platform and otherwise builds from source with cargo:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/install.sh | sh
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--prefix DIR` | Install under `DIR` (default `$HOME/.local`, or `/usr/local` as root) |
+| `--bin-dir DIR` | Put the executables in `DIR` instead of `PREFIX/bin` |
+| `--from-source` | Skip the prebuilt release and build with cargo |
+| `--source DIR` | Build from the checkout in `DIR` (implies `--from-source`) |
+| `--gui` | Also install the desktop app |
+| `--version TAG` | Install a specific release tag |
+| `--no-completions` | Do not install shell completions |
+| `--uninstall` | Remove everything a previous run installed |
+| `--dry-run` | Print what would happen and change nothing |
+
+It installs `fast-text` / `ft`, `textwrite` / `tw`, and bash and zsh
+completions, and records every path in `PREFIX/share/fast-text/installed-files`
+so `--uninstall` is exact. When the prefix is not writable the script uses
+`sudo` if it is available.
+
 ## Keys
 
 | Key | Action | Key | Action |
@@ -89,6 +117,65 @@ rooted at the folder you launched from (or `Ctrl+Shift+O` to pick another).
 opens a file, `r` reloads, and `.` toggles dotfiles. With the mouse you can
 click a file to open it, click a tab to switch, and click a tab's `✕` to close
 it.
+
+## Configuration
+
+Every key above is rebindable. Settings live in
+`$XDG_CONFIG_HOME/fast-text/config.toml` (usually
+`~/.config/fast-text/config.toml`); `FAST_TEXT_CONFIG` or `--config PATH`
+override that. The file is optional — a missing file just means defaults, and
+bad lines are reported in the status bar rather than stopping the editor.
+
+```toml
+[editor]
+cursor_style = "bar"      # bar | block | underline
+theme        = "dark"     # dark | light
+sidebar      = false      # start with the folder explorer visible
+lsp          = true       # talk to language servers (as FAST_TEXT_LSP)
+
+[sidebar]
+hidden = false            # list dot-files
+
+[keys]
+"f1"     = "help"
+"alt+m"  = "manage_plugins"
+"ctrl+k" = "cursor_block"
+```
+
+Pick *Reload config* from the `Ctrl+P` palette to apply changes without
+restarting, or *Open config file*, which opens the file and writes a fully
+commented template the first time it is needed.
+
+### Custom keybindings
+
+`[keys]` maps a key spelling to a command. The command is either a built-in id
+(listed below) or any command title from the `Ctrl+P` palette, including plugin
+and TextWrite commands:
+
+```
+save, save_as, open, new, close, quit, undo, redo, select_all,
+clear_selection, copy, cut, paste, find, find_next, find_prev, replace,
+goto_line, language, command_palette, complete, hover, definition,
+eval_textwrite, run_automation, toggle_theme, toggle_sidebar, open_folder,
+manage_plugins, install_plugin, cursor_bar, cursor_block, cursor_underline,
+help, next_tab, prev_tab, reload_config, open_config
+```
+
+Spellings use the same grammar as plugin bindings — `ctrl+k`, `alt+left`, `f5`,
+`shift+enter` — and a user binding takes precedence over every built-in one. A
+bare letter with no modifier is refused, because it would stop you typing it.
+
+### Command line
+
+| Option | Effect |
+| --- | --- |
+| `-h`, `--help` | Print usage |
+| `-V`, `--version` | Print the version |
+| `-c`, `--config PATH` | Read settings from `PATH` |
+| `--` | Treat every later argument as a file name |
+
+`FAST_TEXT_LSP=0` turns language servers off even when `config.toml` asks for
+them.
 
 ## Languages
 
@@ -412,11 +499,14 @@ Implemented today:
 - [x] Visual-Studio-style plugin manager (`Ctrl+M` / `Alt+M`): lists every plugin
       with its commands, keybindings, and load errors, and can enable, disable,
       install, or uninstall them
-- [x] 190 automated tests (core, syntax, plugins, LSP, wasm, GUI, TUI, TextWrite)
+- [x] `config.toml` (cursor style, theme, explorer, LSP) plus fully custom
+      keybindings via `[keys]`, reloadable from the palette
+- [x] Universal `install.sh`: prebuilt releases with a source-build fallback,
+      shell completions, and `--uninstall`
+- [x] 211 automated tests (core, syntax, plugins, LSP, wasm, GUI, TUI, TextWrite)
 
 Planned:
 
-- [ ] Config file + keybinding customization
 - [ ] Signed releases and prebuilt binaries
 
 ## License

@@ -758,6 +758,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Shift+Arrows  Select  Ctrl+←/→  Word move"),
         Line::from(" Sidebar: ↑↓ ←→ Enter   r reload  . hidden"),
         Line::from(" Mouse: click a file or tab; ✕ closes a tab"),
+        Line::from(" Config: $XDG_CONFIG_HOME/fast-text/config.toml — rebind keys here"),
         Line::from(""),
         Line::from(Span::styled(
             " Press any key to close ",

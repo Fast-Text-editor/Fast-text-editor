@@ -108,6 +108,14 @@ impl Sidebar {
         self.show_hidden
     }
 
+    /// Shows or hides dot-files (used by `config.toml`).
+    pub fn set_show_hidden(&mut self, show: bool) {
+        if self.show_hidden != show {
+            self.show_hidden = show;
+            self.refresh();
+        }
+    }
+
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }

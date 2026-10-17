@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::Rect;
 
+use crate::config::Config;
 use crate::lsp::LspManager;
 use crate::plugin_manager::{ManagerAction, PluginManager};
 use crate::sidebar::{Sidebar, SidebarAction};
@@ -220,7 +221,7 @@ pub struct CompletionState {
 }
 
 /// Command palette entries handled directly by the editor, with no plugin.
-const BUILTIN_COMMANDS: [&str; 7] = [
+const BUILTIN_COMMANDS: [&str; 9] = [
     "Toggle sidebar",
     "Open folder…",
     "Manage plugins",
@@ -228,6 +229,8 @@ const BUILTIN_COMMANDS: [&str; 7] = [
     "Cursor: bar",
     "Cursor: block",
     "Cursor: underline",
+    "Reload config",
+    "Open config file",
 ];
 
 /// A clickable region of the tab bar, recorded while it is drawn.
@@ -310,10 +313,32 @@ pub struct App {
     pub sidebar: Sidebar,
     /// Clickable tab-bar regions, refreshed on every draw.
     pub tab_hits: Vec<TabHit>,
+    /// `[keys]` from `config.toml`: user bindings, the highest precedence.
+    pub keybindings: HashMap<KeySpec, String>,
+    /// Where `config.toml` was read from (or would be written to).
+    pub config_path: Option<PathBuf>,
 }
 
 impl App {
+    /// Builds an editor with the built-in defaults. `App::with_config` is the
+    /// same thing with a user's `config.toml` applied on top.
     pub fn new(files: Vec<PathBuf>) -> Self {
+        Self::with_config(files, Config::default())
+    }
+
+    /// Builds an editor, applying the settings and keybindings from `config`.
+    pub fn with_config(files: Vec<PathBuf>, config: Config) -> Self {
+        // `FAST_TEXT_LSP=0` still wins, so a stray config can't force LSP on.
+        let lsp = config.lsp && lsp_enabled();
+        let mut app = Self::base(files, lsp);
+        let warnings = app.apply_config(config);
+        if !warnings.is_empty() {
+            app.set_error(format!("fast-text: {}", warnings.join("; ")));
+        }
+        app
+    }
+
+    fn base(files: Vec<PathBuf>, lsp: bool) -> Self {
         let mut editors = Vec::new();
         for path in files {
             match Editor::open_or_new(path.clone()) {
@@ -323,7 +348,7 @@ impl App {
         }
         if editors.is_empty() {
             editors.push(Editor::from_text(
-                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
+                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
                 LanguageId::Rust,
             ));
         }
@@ -350,13 +375,35 @@ impl App {
             plugins,
             scripts,
             plugin_manager,
-            lsp: LspManager::new(lsp_enabled()),
+            lsp: LspManager::new(lsp),
             completion: None,
             language_names: all_language_names(),
             pending: VecDeque::new(),
             sidebar,
             tab_hits: Vec::new(),
+            keybindings: HashMap::new(),
+            config_path: None,
         }
+    }
+
+    /// Applies a loaded config, returning the warnings it produced.
+    fn apply_config(&mut self, config: Config) -> Vec<String> {
+        self.cursor_style = config.cursor_style;
+        self.dark_theme = !config.light_theme;
+        self.theme = if config.light_theme {
+            Theme::light()
+        } else {
+            Theme::dark()
+        };
+        if config.sidebar {
+            self.sidebar.show();
+        } else {
+            self.sidebar.hide();
+        }
+        self.sidebar.set_show_hidden(config.show_hidden);
+        self.keybindings = config.key_map();
+        self.config_path = config.path.clone();
+        config.warnings
     }
 
     pub fn editor(&self) -> &Editor {
@@ -542,8 +589,170 @@ impl App {
                 self.set_cursor_style_builtin(CursorStyle::Underline);
                 true
             }
+            "Reload config" => {
+                self.reload_config();
+                true
+            }
+            "Open config file" => {
+                self.open_config_file();
+                true
+            }
             _ => false,
         }
+    }
+
+    /// Runs a named command: a built-in id (see `Config::TEMPLATE`) or any
+    /// command palette title, including plugin commands. Returns false when
+    /// nothing matches, so callers can report it.
+    pub fn run_command(&mut self, name: &str) -> bool {
+        let id = name.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        if self.run_command_id(&id) {
+            return true;
+        }
+        if let Some(title) = self
+            .command_titles()
+            .into_iter()
+            .find(|t| t.eq_ignore_ascii_case(name.trim()))
+        {
+            self.run_plugin_command(&title);
+            return true;
+        }
+        false
+    }
+
+    /// Dispatches the built-in command ids used by `[keys]`.
+    fn run_command_id(&mut self, id: &str) -> bool {
+        match id {
+            "save" => self.save(),
+            "save_as" | "saveas" => {
+                self.prompt = Prompt::SaveAs {
+                    input: self.current_path(),
+                }
+            }
+            "open" | "open_file" => {
+                self.prompt = Prompt::OpenFile {
+                    input: String::new(),
+                }
+            }
+            "new" | "new_buffer" => self.new_buffer(),
+            "close" | "close_buffer" | "close_tab" => self.close_buffer(),
+            "quit" | "quit_force" => self.quit(),
+            "undo" => self.editor_mut().doc.undo(),
+            "redo" => self.editor_mut().doc.redo(),
+            "select_all" => self.editor_mut().doc.select_all(),
+            "clear_selection" => {
+                self.editor_mut().doc.collapse_selection();
+                self.message = None;
+            }
+            "copy" => self.copy(),
+            "cut" => self.cut(),
+            "paste" => self.paste(),
+            "find" => {
+                self.prompt = Prompt::Find {
+                    input: self.last_search.clone().unwrap_or_default(),
+                }
+            }
+            "find_next" => self.find_next(SearchDirection::Forward),
+            "find_prev" | "find_previous" => self.find_next(SearchDirection::Backward),
+            "replace" => {
+                self.prompt = Prompt::Replace {
+                    find: self.last_search.clone().unwrap_or_default(),
+                    replace: String::new(),
+                    on_replace: false,
+                }
+            }
+            "goto_line" => {
+                self.prompt = Prompt::GotoLine {
+                    input: String::new(),
+                }
+            }
+            "language" | "set_language" => {
+                self.prompt = Prompt::Language {
+                    input: String::new(),
+                    selected: 0,
+                }
+            }
+            "command_palette" | "palette" => {
+                self.prompt = Prompt::Command {
+                    input: String::new(),
+                }
+            }
+            "complete" => self.trigger_completion(),
+            "hover" => self.show_hover(),
+            "definition" | "goto_definition" => self.goto_definition(),
+            "eval" | "eval_textwrite" => {
+                self.prompt = Prompt::Eval {
+                    input: String::new(),
+                }
+            }
+            "run_automation" | "automation" => {
+                self.prompt = Prompt::Automation {
+                    input: String::new(),
+                }
+            }
+            "toggle_theme" => self.toggle_theme(),
+            "toggle_sidebar" => self.toggle_sidebar(),
+            "open_folder" => {
+                self.prompt = Prompt::OpenFolder {
+                    input: self.sidebar.root().to_string_lossy().into_owned(),
+                }
+            }
+            "manage_plugins" => self.open_plugin_manager(),
+            "install_plugin" => self.ask_install_plugin(),
+            "cursor_bar" => self.set_cursor_style_builtin(CursorStyle::Bar),
+            "cursor_block" => self.set_cursor_style_builtin(CursorStyle::Block),
+            "cursor_underline" => self.set_cursor_style_builtin(CursorStyle::Underline),
+            "help" => self.show_help = true,
+            "next_tab" | "next_buffer" => self.next_tab(),
+            "prev_tab" | "previous_tab" => self.prev_tab(),
+            "reload_config" => self.reload_config(),
+            "open_config" | "open_config_file" => self.open_config_file(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// The active buffer's path, or an empty string when it has none.
+    fn current_path(&self) -> String {
+        self.editor()
+            .doc
+            .path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Re-reads `config.toml`, applying settings and keybindings immediately.
+    pub fn reload_config(&mut self) {
+        let config = Config::load_from(self.config_path.clone().or_else(Config::path));
+        let path = config.path.clone();
+        let loaded = config.loaded;
+        let warnings = self.apply_config(config);
+        if !warnings.is_empty() {
+            self.set_error(format!("fast-text: {}", warnings.join("; ")));
+        } else {
+            match path {
+                Some(p) if loaded => self.set_message(format!("Reloaded {}", p.display())),
+                Some(p) => self.set_message(format!("No config at {}", p.display())),
+                None => self.set_message("Reloaded defaults"),
+            }
+        }
+    }
+
+    /// Opens `config.toml`, writing the commented template when it is missing.
+    pub fn open_config_file(&mut self) {
+        let Some(path) = self.config_path.clone().or_else(Config::path) else {
+            self.set_error("fast-text: cannot locate a config path (HOME is unset)");
+            return;
+        };
+        if !path.exists() {
+            if let Err(e) = Config::write_template(&path) {
+                self.set_error(format!("Cannot create {}: {e}", path.display()));
+                return;
+            }
+            self.set_message(format!("Created {}", path.display()));
+        }
+        self.config_path = Some(path.clone());
+        self.open_path(path);
     }
 
     /// Every registered command title: built-ins, Rhai plugins, TextWrite scripts.
@@ -1370,6 +1579,16 @@ impl App {
                     return true;
                 }
                 _ => self.completion = None,
+            }
+        }
+
+        // User keybindings from config.toml win over every built-in binding.
+        if let Some(spec) = key_event_to_spec(&key, ctrl, alt, shift) {
+            if let Some(name) = self.keybindings.get(&spec).cloned() {
+                if !self.run_command(&name) {
+                    self.set_error(format!("fast-text: no command named '{name}'"));
+                }
+                return true;
             }
         }
 
@@ -2576,5 +2795,76 @@ mod tests {
         assert_eq!(app.sidebar.selected(), 0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn app_with(config: &str) -> App {
+        App::with_config(Vec::new(), Config::parse(config))
+    }
+
+    #[test]
+    fn config_settings_are_applied_at_startup() {
+        let app = app_with(
+            "[editor]\ncursor_style = \"underline\"\ntheme = \"light\"\nsidebar = true\n[sidebar]\nhidden = true\n",
+        );
+        assert_eq!(app.cursor_style, CursorStyle::Underline);
+        assert!(!app.dark_theme);
+        assert!(app.sidebar.visible());
+        assert!(app.sidebar.show_hidden());
+    }
+
+    #[test]
+    fn a_config_warning_is_shown_as_an_error() {
+        let app = app_with("[editor]\ncursor_style = \"squiggly\"\n");
+        assert!(app.is_error);
+        assert!(app.message.unwrap().contains("cursor_style"));
+    }
+
+    #[test]
+    fn a_user_binding_beats_the_built_in_one() {
+        // Ctrl+P normally opens the palette; the config steals it.
+        let mut app = app_with("[keys]\n\"ctrl+p\" = \"toggle_sidebar\"\n");
+        assert!(!app.sidebar.visible());
+        app.handle_key(ctrl('p'));
+        assert!(app.sidebar.visible());
+        assert!(!app.prompt.is_active(), "the palette must not open");
+    }
+
+    #[test]
+    fn a_user_binding_can_reach_a_movement_free_command() {
+        let mut app = app_with("[keys]\n\"f1\" = \"help\"\n");
+        assert!(!app.show_help);
+        app.handle_key(key(KeyCode::F(1)));
+        assert!(app.show_help);
+    }
+
+    #[test]
+    fn a_user_binding_may_name_any_command_title() {
+        let mut app = app_with("[keys]\n\"alt+g\" = \"Manage plugins\"\n");
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT));
+        assert!(app.plugin_manager.is_open());
+    }
+
+    #[test]
+    fn an_unknown_command_name_reports_an_error() {
+        let mut app = app_with("[keys]\n\"alt+z\" = \"does-not-exist\"\n");
+        app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+        assert!(app.is_error);
+        assert!(app.message.unwrap().contains("no command named"));
+    }
+
+    #[test]
+    fn run_command_accepts_ids_titles_and_plugin_commands() {
+        let mut app = empty_app();
+        assert!(app.run_command("cursor_block"));
+        assert_eq!(app.cursor_style, CursorStyle::Block);
+        assert!(app.run_command("Toggle sidebar"));
+        assert!(app.sidebar.visible());
+        assert!(!app.run_command("no such command"));
+    }
+
+    #[test]
+    fn the_welcome_screen_mentions_the_config_file() {
+        let app = empty_app();
+        assert!(app.editor().doc.text().contains("config.toml"));
     }
 }
