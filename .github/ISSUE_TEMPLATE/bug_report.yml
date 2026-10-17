@@ -1,0 +1,51 @@
+name: Bug report
+description: Something is not working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The more precisely you can describe what
+        happened, the faster it can be fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `ft file.py`
+        2. Press ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Fast Text version
+      description: Output of `ft --version`.
+      placeholder: fast-text 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: frontend
+    attributes:
+      label: Frontend
+      options:
+        - Terminal (fast-text / ft)
+        - Desktop (fast-text-gui)
+        - Web (WASM)
+        - TextWrite (textwrite / tw)
+        - Library (fast-text-core)
+  - type: input
+    id: environment
+    attributes:
+      label: OS and terminal
+      placeholder: "Linux (Fedora 41), kitty 0.40 / macOS 15, Terminal.app / Windows 11"
+    validations:
+      required: true

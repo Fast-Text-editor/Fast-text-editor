@@ -289,13 +289,16 @@ fetch() { # url dest
 }
 
 release_url() { # target
+    # The release workflow names each archive `fast-text-<target>.tar.gz`
+    # (no version in the name), so the same asset works through both the
+    # rolling `latest` alias and a pinned `--version <tag>`.
     if [ "$VERSION" = "latest" ]; then
-        printf 'https://github.com/%s/releases/latest/download/%s-%s.tar.gz\n' \
-            "$REPO" "$PROGRAM" "$1"
+        base="releases/latest/download"
     else
-        printf 'https://github.com/%s/releases/download/%s/%s-%s-%s.tar.gz\n' \
-            "$REPO" "$VERSION" "$PROGRAM" "$VERSION" "$1"
+        base="releases/download/$VERSION"
     fi
+    printf 'https://github.com/%s/%s/%s-%s.tar.gz\n' \
+        "$REPO" "$base" "$PROGRAM" "$1"
 }
 
 # Downloads and unpacks a release into $TMP_DIR/release; returns non-zero

@@ -1,5 +1,10 @@
 # Fast Text
 
+[![CI](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/ci.yml)
+[![Release](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/release.yml/badge.svg)](https://github.com/Fast-Text-editor/Fast-text-editor/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.77%2B-orange.svg)](https://www.rust-lang.org)
+
 A fast, modern text editor written in Rust. Fast Text is built as a **Cargo
 workspace** with a single powerful engine and thin frontends layered on top, so
 the editor behaves identically everywhere.
@@ -32,6 +37,7 @@ fast-text/
 ├── plugins/               # example Rhai plugins (loaded at startup)
 ├── web/                   # browser frontend (see web/README.md)
 ├── install.sh             # universal installer: prebuilt release or source build
+└── .github/workflows/     # CI (fmt, clippy, tests) and tagged release binaries
 ```
 
 ## Why this shape
@@ -99,6 +105,11 @@ completions, and records every path in `PREFIX/share/fast-text/installed-files`
 so `--uninstall` is exact. When the prefix is not writable the script uses
 `sudo` if it is available.
 
+Prebuilt archives are published for **x86_64 and aarch64 Linux** (glibc) and
+**x86_64 and aarch64 macOS**; every other platform builds from source
+automatically. Releases are produced by `.github/workflows/release.yml` when a
+`v*` tag is pushed.
+
 ## Keys
 
 | Key | Action | Key | Action |
@@ -113,10 +124,19 @@ so `--uninstall` is exact. When the prefix is not writable the script uses
 | `Ctrl+L` | Language picker | `Ctrl+P` | Command palette |
 | `Ctrl+Space` | Complete | `F5` | Hover info |
 | `F12` | Go to definition | `Alt+H` | Help |
-| `Esc` | Clear selection | | |
+| `Esc` | Collapse selection | `Alt+M` | Plugin manager |
 | `Ctrl+B` | Toggle explorer | `Ctrl+Shift+O` | Open folder |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab | `Ctrl+M` / `Alt+M` | Manage plugins |
-| `Alt+1` / `Alt+2` / `Alt+3` | Cursor bar / block / underline | `Alt+H` | Help |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab | `Alt+1` `Alt+2` `Alt+3` | Cursor bar / block / underline |
+| `Ctrl+Shift+F` / `Alt+F` | Find in files | `Ctrl+D` | Select next occurrence |
+| `Alt+O` | Document symbols | `Alt+N` | Rename symbol |
+| `Ctrl+Shift+I` | Format document | `Ctrl+.` | Code actions |
+| `Ctrl+/` | Toggle comment | `Ctrl+Shift+D` | Duplicate line |
+| `Ctrl+Shift+K` | Delete line | `Alt+↑` / `Alt+↓` | Move line up / down |
+| `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro |
+
+A few chords are terminal-dependent (`Ctrl+Shift+<letter>`, `Ctrl+.`). Every
+action also has a palette entry and a `[keys]` id, so you can rebind it — for
+example `"alt+shift+f" = "find_in_files"`.
 
 `Shift` + arrows extends the selection; `Ctrl` + left/right moves by word.
 
@@ -129,6 +149,20 @@ rooted at the folder you launched from (or `Ctrl+Shift+O` to pick another).
 opens a file, `r` reloads, and `.` toggles dotfiles. With the mouse you can
 click a file to open it, click a tab to switch, and click a tab's `✕` to close
 it.
+
+`Ctrl+Shift+F` (or `Alt+F`) opens **find in files**: type a query, `Tab` toggles
+case sensitivity, and `Enter` on a result jumps straight to the hit. Search runs
+over the explorer's current folder.
+
+`Ctrl+D` adds the **next occurrence** of the word under the caret as another
+caret, and `Alt+Shift+↑`/`Alt+Shift+↓` add one on the line above/below; typing
+then edits every caret at once as a single undo step. `F6` starts recording a
+**macro**, `F7` replays the last one, and *Save macro…* names one so you can bind
+it (`"alt+k" = "macro_tidy imports"`).
+
+With a language server running (see [Language servers](#language-servers)),
+`Ctrl+Shift+I` formats the document, `Ctrl+.` offers code actions, `Alt+N`
+renames the symbol under the cursor, and `Alt+O` lists document symbols.
 
 ## Configuration
 
@@ -170,8 +204,14 @@ clear_selection, copy, cut, paste, find, find_next, find_prev, replace,
 goto_line, language, command_palette, complete, hover, definition,
 eval_textwrite, run_automation, toggle_theme, toggle_sidebar, open_folder,
 manage_plugins, install_plugin, cursor_bar, cursor_block, cursor_underline,
-help, next_tab, prev_tab, reload_config, open_config
+help, next_tab, prev_tab, reload_config, open_config,
+find_in_files, document_symbols, rename_symbol, format_document,
+code_actions, toggle_comment, duplicate_line, delete_line, move_line_up,
+move_line_down, select_next_occurrence, record_macro, replay_macro,
+save_macro
 ```
+
+A named macro can also be bound with the id `macro_<name>`.
 
 Spellings use the same grammar as plugin bindings — `ctrl+k`, `alt+left`, `f5`,
 `shift+enter` — and a user binding takes precedence over every built-in one. A
@@ -265,11 +305,12 @@ bind("ctrl+shift+q", "Wrap in quotes")
 ```
 
 Both languages run against the same editor API (the `EditorAction` queue), so a
-script can be written in either. See `plugins/example.rhai` and
-`plugins/example.tw`. Press **`Ctrl+E`** to evaluate a TextWrite snippet against
-the current buffer and see the result in the status bar.
+script can be written in either. The repository ships several examples under
+`plugins/`: `example.rhai`, `example.tw`, `cursor.tw`, plus `text_tools.tw`
+(sort/uppercase/number lines), `markdown.tw`, and `notes.tw`. Press **`Ctrl+E`**
+to evaluate a TextWrite snippet against the current buffer and see the result in
+the status bar.
 
-Scripts can also change the terminal cursor shape with `set_cursor_style`, which
 ### The plugin manager
 
 Press **`Alt+M`** (or **`Ctrl+M`**, or pick *Manage plugins* from the `Ctrl+P`

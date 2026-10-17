@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: A clear description of the need or the friction you hit.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Including how other editors handle it, if relevant.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Engine (core editing)
+        - Terminal editor (TUI)
+        - Desktop / web frontend
+        - Syntax highlighting / languages
+        - Language servers (LSP)
+        - Plugins / TextWrite / automations
+        - Configuration / keybindings
+        - Installer / packaging
+        - Documentation
+    validations:
+      required: true

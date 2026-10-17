@@ -17,7 +17,13 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Fast Text contributors"]
-repository = "https://example.com/fast-text"
+repository = "https://github.com/Fast-Text-editor/Fast-text-editor"
+homepage = "https://github.com/Fast-Text-editor/Fast-text-editor"
+documentation = "https://github.com/Fast-Text-editor/Fast-text-editor#readme"
+readme = "README.md"
+rust-version = "1.77"
+keywords = ["editor", "text-editor", "tui", "scripting", "terminal"]
+categories = ["command-line-utilities", "text-editors", "development-tools"]
 
 [workspace.dependencies]
 fast-text-core = { path = "crates/fast-text-core" }
