@@ -103,6 +103,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      # `gh` resolves the repository from the git remote, so the release job
+      # needs a checkout even though it produces no build output itself.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -126,8 +130,8 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           assets=(artifacts/*.tar.gz artifacts/*.zip artifacts/*.sha256)
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${assets[@]}" --clobber
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes "${assets[@]}"
+            gh release create "$TAG" --title "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY" "${assets[@]}"
           fi
