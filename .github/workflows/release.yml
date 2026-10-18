@@ -122,6 +122,25 @@ jobs:
           done
           cat ./*.sha256
 
+      - name: Extract release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Use the matching "## [x.y.z]" CHANGELOG section as the release body.
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then
+            cat notes.md
+          else
+            echo "No CHANGELOG section for ${TAG}; GitHub will generate notes." >&2
+            rm -f notes.md
+          fi
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,8 +149,14 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           assets=(artifacts/*.tar.gz artifacts/*.zip artifacts/*.sha256)
+          if [ -f notes.md ]; then
+            notes=(--notes-file notes.md)
+          else
+            notes=(--generate-notes)
+          fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${notes[@]}"
             gh release upload "$TAG" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY" "${assets[@]}"
+            gh release create "$TAG" --title "$TAG" --repo "$GITHUB_REPOSITORY" "${notes[@]}" "${assets[@]}"
           fi
