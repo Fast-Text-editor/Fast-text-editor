@@ -1,0 +1,57 @@
+# ===========================================================================
+# TextWrite numbers and types — math, conversions, and truthiness.
+#
+# Run it with:   tw math_and_types.tw
+# ===========================================================================
+
+# --- Integers and floats ---------------------------------------------------
+# There are two number types. `/` always produces a float (printed without a
+# decimal point when it is whole); `%` on two ints is integer remainder.
+print "int    :", 6 / 3, 7 / 2
+print "int    :", 2 ** 10              # `**` on ints stays an int
+print "rem    :", 10 % 3, -7 % 3       # remainder keeps the dividend's sign
+print "float  :", 1.5 + 1, 4.0, 2.5e-3
+print "compare:", 1 is 1.0             # int and float compare by value
+
+# --- Math builtins ---------------------------------------------------------
+print "abs    :", abs(-4), abs(-2.5)
+print "min/max:", min(4, 2, 9), max(4, 2, 9)
+print "min/max:", min([3, 7, 1]), max([3, 7, 1])   # a list works too
+print "min()  :", min([])                          # empty list -> none
+
+# floor/ceil/round return an int; sqrt/pow always return a float.
+print "floor  :", floor(2.7)
+print "ceil   :", ceil(2.1)
+print "round  :", round(2.5), round(2.4)
+print "sqrt   :", sqrt(9), sqrt(2)
+print "pow    :", pow(2, 10), 2 ** 10     # same value, `pow` is a float call
+
+# --- Conversions -----------------------------------------------------------
+# int() truncates toward zero and accepts numeric strings; float()/str()/
+# bool() round out the set. bool() reports truthiness.
+print "int    :", int(3.9), int(-3.9), int("42"), int("3.9"), int(true)
+print "float  :", float(3), float("3.5")
+print "str    :", str(1.5), str(true), str(none), str([1, 2]), str({ a: 1 })
+
+# str() is how you interleave a value into a larger string without `+`.
+print "build  :", "items: " + str(len([1, 2, 3]))
+
+# --- type() ----------------------------------------------------------------
+print "types  :",
+    type(1), type(1.0), type("s"), type(true), type(none),
+    type([]), type({}), type(fn() { return 1 })
+
+# --- Truthiness ------------------------------------------------------------
+# `none` and `false` are false, and the empty values 0, 0.0, "", [], {} are
+# false as well. Everything else is true. This decides every `if`/`while`.
+let samples = [0, 0.0, "", [], {}, none, false, 1, -1, "x", [0], { a: 1 }]
+for s in samples {
+    let label = str(s)
+    if label is "" { label = '""' }        # the empty string has no display
+    print "truthy :", label, "->", bool(s)
+}
+
+# Because `or` returns the first truthy operand, it doubles as a default.
+let limit = 0
+print "default:", limit or 100
+print "default:", none or "untitled"

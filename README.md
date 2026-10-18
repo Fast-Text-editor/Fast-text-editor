@@ -518,8 +518,10 @@ tw examples.tw                           # run a script
 The language is implemented in four passes — `lexer` → `parser` → `interp` over
 an `ast`, with `stdlib` builtins — all hand-written with **zero dependencies**,
 so it is portable (including to WebAssembly) and easy to embed. See
-`crates/textwrite/README.md` for the full language reference and
-`crates/textwrite/examples/` for runnable programs.
+`crates/textwrite/README.md` for the full language reference, and
+`crates/textwrite/examples/` for a runnable program covering every area of the
+language — from `basics.tw`, `strings.tw`, and `functions.tw` to a `cookbook.tw`
+of small complete programs.
 
 Inside the editor, TextWrite is wired up through the `fast-text-textwrite` crate,
 which implements the language's [`Host`] hook and turns script calls into the

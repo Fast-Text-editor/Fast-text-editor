@@ -1,0 +1,65 @@
+# ===========================================================================
+# TextWrite strings — text, interpolation, indexing, and the string builtins.
+#
+# Run it with:   tw strings.tw
+# ===========================================================================
+
+# --- Quoting and escapes ---------------------------------------------------
+# Double quotes understand escapes and `{...}` interpolation; single quotes
+# are literal (escapes still work, but `{ }` are just braces).
+let name = "Ada"
+print "Hi {name}, {1 + 2} times!"     # -> Hi Ada, 3 times!
+print 'No {name} here'                # -> No {name} here
+
+# Write `{{` and `}}` for literal braces.
+print "A set looks like {{a, b}}"
+
+# Escapes: \n \t \r \" \' \\ \{ \}
+print "tab:\there  newline:\nsecond line  quote:\""
+
+# --- Concatenation and length ---------------------------------------------
+let s = "Hello, World"
+print "concat :", "Hello" + ", " + "World"
+print "len    :", len(s)              # length in characters, not bytes
+print "unicode:", len("héllo")        # -> 5
+
+# --- Indexing and slicing --------------------------------------------------
+# A string index yields a one-character string. Negative indices count from
+# the end. Slicing is `slice(s, start, end)`; `end` may be omitted.
+print "index  :", s[0], s[7], s[-1]   # H W d
+print "slice  :", slice(s, 0, 5)      # Hello
+print "slice  :", slice(s, 7)         # World
+print "first  :", first(s), last(s)   # H d
+
+for ch in "abc" {                     # strings are iterable
+    print "char   :", ch
+}
+
+# --- Builtins --------------------------------------------------------------
+print "case   :", upper(s), lower(s)
+print "trim   :", trim("  padded  ")
+print "replace:", replace("a-b-c", "-", "+")
+print "starts :", starts_with(s, "Hello"), ends_with(s, "World")
+
+# `split` and its inverse `join`. An empty separator splits into characters.
+print "split  :", split("a,b,,c", ",")
+print "split  :", split("abc", "")
+print "join   :", join(["a", "b", "c"], "-")
+
+# `contains` tests a substring; `index_of` gives the character position.
+print "in     :", contains(s, "World"), contains(s, "xyz")
+print "indexof:", index_of(s, "World")     # 7
+
+# `chars` and `lines` turn text into a list, which pairs well with map/filter.
+print "chars  :", chars("abc")
+print "lines  :", lines("first\nsecond\nthird")
+
+# --- Methods ---------------------------------------------------------------
+# Every builtin whose first argument is the receiver can be called as a
+# method, which makes pipelines read left to right.
+print "methods:", "  Hello  ".trim().lower()
+print "chain  :", "a,b,c".split(","), join("a,b,c".split(","), " | ")
+print "upper  :", name.upper(), s.split(", ")      # method call without args
+
+# --- Comparison ------------------------------------------------------------
+print "order  :", "apple" < "banana", "abc" is "abc"

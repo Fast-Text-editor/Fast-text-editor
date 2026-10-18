@@ -289,6 +289,20 @@ fn examples_run() {
         }
         let source = std::fs::read_to_string(&path).unwrap();
         let mut tw = Interpreter::new();
+        // Relative `import`s resolve against the examples directory.
+        tw.set_module_base(dir);
+        // A few examples need the outside world (stdin, the filesystem). They
+        // carry a `# requires:` marker and are parsed — with their imports
+        // resolved — but not executed.
+        if source
+            .lines()
+            .take(3)
+            .any(|line| line.starts_with("# requires: "))
+        {
+            tw.compile(&source)
+                .unwrap_or_else(|e| panic!("{} failed to compile: {e}", path.display()));
+            continue;
+        }
         tw.run(&source)
             .unwrap_or_else(|e| panic!("{} failed: {e}", path.display()));
     }

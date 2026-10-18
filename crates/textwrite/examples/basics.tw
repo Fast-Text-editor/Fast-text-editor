@@ -1,0 +1,74 @@
+# ===========================================================================
+# TextWrite basics — comments, literals, variables, and printing.
+#
+# Run it with:   tw basics.tw
+# ===========================================================================
+
+# --- Comments --------------------------------------------------------------
+# Three comment forms; all run to the end of the line or a closing marker.
+#   # hash comment
+//   // slash comment
+/*   ...and a
+     block comment */
+
+# --- Literals --------------------------------------------------------------
+# TextWrite has eight kinds of value: int, float, string, bool, none, list,
+# map, and function.
+
+let an_int = 42              # int
+let hex = 0xFF               # int, written in hex (255); `_` groups digits
+let grouped = 1_000_000      # int, the underscores are only for reading
+let a_float = 3.14           # float
+let scientific = 2.5e-3      # float, scientific notation (0.0025)
+let text = "double quoted"   # string
+let literal = 'single quoted' # string; no interpolation, escapes only
+let flag = true              # bool
+let nothing = none           # the absence of a value
+let a_list = [1, 2, 3]       # list (order matters, duplicates allowed)
+let a_map = { name: "Ada", age: 36 }  # map (string keys, insertion order)
+
+print "an_int    =", an_int
+print "hex       =", hex
+print "grouped   =", grouped
+print "a_float   =", a_float
+print "scientific=", scientific
+print "text      =", text
+print "literal   =", literal
+print "flag      =", flag
+print "nothing   =", nothing
+print "a_list    =", a_list
+print "a_map     =", a_map
+
+# `type(value)` reports the kind as a string.
+print "types:",
+    type(an_int), type(a_float), type(text), type(flag),
+    type(nothing), type(a_list), type(a_map)
+
+# --- Variables -------------------------------------------------------------
+# `let` declares; `=` assigns. Re-declaring with `let` shadows the old value.
+
+let counter = 0
+counter = counter + 1        # plain assignment
+counter += 10                # compound assignment: += -= *= /= %=
+counter -= 1                 # ...also works on strings and lists (see below)
+set counter = 20             # `set x = ...` is an accepted synonym for `=`
+print "counter   =", counter
+
+let greeting = "hi"
+greeting += ", there"        # `+=` appends to a string
+let items = [1]
+items += [2, 3]              # `+=` concatenates lists
+print "greeting  =", greeting
+print "items     =", items
+
+let shadowed = "outer"
+let shadowed = "inner"       # a second `let` re-binds the name
+print "shadowed  =", shadowed
+
+# Assigning to a name that was never declared is an error, so always `let`
+# first. (Try it: `undeclared = 1` fails with "unknown variable".)
+
+# --- Printing --------------------------------------------------------------
+print "print joins arguments with a single space:", 1, "two", 3.0
+write "write ", "concatenates ", "with nothing"
+print ""                     # `print` with no arguments just ends the line

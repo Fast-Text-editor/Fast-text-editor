@@ -1,0 +1,43 @@
+# ===========================================================================
+# TextWrite modules — sharing code across files with `import`.
+#
+# Run it with:   tw modules.tw
+#
+# `import "name"` looks for a built-in package or a `.tw` file relative to the
+# importing file (the short `tw` runner sets that directory automatically).
+# There are two forms, and they can be combined in one program.
+# ===========================================================================
+
+# --- Merge: exports land in the current scope -----------------------------
+import "units"                       # finds units.tw beside this file
+
+print "merged :", celsius_to_fahrenheit(100)     # 212
+print "merged :", describe_temp(30)               # warm
+print "merged :", km_to_miles(8)
+
+# --- Namespace: exports stay under a name ---------------------------------
+import "units" as u
+
+print "space  :", u.celsius_to_fahrenheit(0)
+print "space  :", u.FREEZING_C                    # exported `let` constants
+print "space  :", u.describe_temp(u.FREEZING_C)
+
+# Importing the same module twice is cheap: it runs once and is cached, so
+# both forms above share the single instance.
+
+# --- Why two forms? --------------------------------------------------------
+# Merge is convenient for a few well-known names. A namespace avoids clashes
+# when several modules export similar ones:
+
+fn describe_temp(x) {                # a local function shadows the merged one
+    return "local override"
+}
+print "shadow :", describe_temp(1), u.describe_temp(1)
+
+# --- Modules can import modules -------------------------------------------
+# An imported module may itself `import` others; those resolve relative to the
+# module doing the importing, and cycles are an error rather than a hang.
+
+# `Interpreter::compile(source)` parses a program and resolves all of its
+# imports — transitively — without running anything, which is how Fast Text
+# validates an automation before it plays it back.

@@ -1,0 +1,62 @@
+# ===========================================================================
+# TextWrite operators — arithmetic, comparison, and boolean logic.
+#
+# Run it with:   tw operators.tw
+# ===========================================================================
+
+# --- Arithmetic ------------------------------------------------------------
+print "add   :", 2 + 3
+print "sub   :", 10 - 4
+print "mul   :", 6 * 7
+print "div   :", 7 / 2        # division is always exact (float)
+print "intdiv:", 6 / 3        # ...but exact results print without a decimal
+print "mod   :", 10 % 3       # `%` on two ints is integer remainder
+print "pow   :", 2 ** 10      # exponentiation
+print "complx:", 2 ** 3 ** 2  # `**` is right-associative: 2 ** (3 ** 2) = 512
+
+# Unary minus and `not`.
+print "negate:", -5, -(2 + 3)
+print "not   :", not true, not false
+
+# `+` is overloaded: numbers add, everything else concatenates. Note that
+# `"n = " + 4` converts the right-hand side to text.
+print "concat:", "n = " + 4, 4 + " is n", "a" + "b"
+print "lists :", [1, 2] + [3, 4]
+
+# --- Precedence ------------------------------------------------------------
+# Highest to lowest:
+#   1. postfix  — call f(), index a[i], field m.k, method s.upper()
+#   2. **       (right-associative)
+#   3. unary    — -x, not x
+#   4. * / %
+#   5. + -
+#   6. comparisons — == != < <= > >=, and the English `is`, `is not`
+#   7. and
+#   8. or
+print "prec  :", 1 + 2 * 3, (1 + 2) * 3, 2 * (3 + 4)
+
+# --- Comparison ------------------------------------------------------------
+# `is` is a readable synonym for `==`; `is not` means `!=`. Numbers compare
+# numerically even across int and float, and equality is structural for lists
+# and maps.
+print "eq    :", 1 is 1, 1 is 1.0, "a" is "a"
+print "neq   :", 1 is not 2
+print "order :", 1 < 2, 2 <= 2, 3 > 4, 5 >= 5, "a" < "b"
+print "struct:", [1, 2] is [1, 2], { a: 1 } is { a: 1 }
+
+# --- Boolean logic ---------------------------------------------------------
+# `and` / `or` short-circuit and return the deciding operand, not a bool — so
+# `or` works as a default-value operator.
+print "and   :", true and false, true and true, false and "never evaluated"
+print "or    :", false or true, none or "fallback", "" or "empty is falsy"
+print "mixed :", 1 < 2 and 3 < 4, 1 > 2 or "still true"
+
+# The decision is made by truthiness: `none` and `false` are false, and
+# `0`, `0.0`, `""`, `[]`, and `{}` are falsy too. Everything else is true.
+print "truthy:",
+    bool(0), bool(0.0), bool(""), bool([]), bool({}),
+    bool(none), bool(false), bool(1), bool("x"), bool(-1)
+
+# A common idiom: fall back to a default when a lookup is missing.
+let port = none
+print "default:", port or 8080

@@ -79,6 +79,35 @@ repeat 3 times {
 }
 ```
 
+## Examples
+
+The `examples/` directory is a set of runnable programs — one per area of the
+language — that double as documentation. Every file is executed by
+`tests/language.rs`, so they cannot drift out of date (files that need the
+outside world carry a `# requires:` marker and are parsed instead of run).
+
+| File | What it teaches |
+| --- | --- |
+| `hello.tw` | The classic first program; strings and `{interpolation}`. |
+| `basics.tw` | Comments, every literal kind, `let`/assignment/`set`, and printing. |
+| `operators.tw` | Arithmetic and precedence, `**`, comparisons, and `and`/`or` short-circuiting. |
+| `strings.tw` | Quoting, escapes, indexing, slicing, and every string builtin. |
+| `lists.tw` | Building, changing, searching, sorting, and folding lists. |
+| `maps.tw` | Insertion-ordered maps: access, mutation, iteration, and counting. |
+| `control_flow.tw` | `if`/`else if`/`else`, `while`, `for`, `repeat N times`, `break`, `continue`. |
+| `functions.tw` | Declarations, recursion, mutual recursion, closures, and higher-order functions. |
+| `math_and_types.tw` | Integers vs floats, the math builtins, conversions, and truthiness. |
+| `errors.tw` | `assert`, `error`, `exit`, and the errors the runtime raises for you. |
+| `modules.tw` | `import` in both forms — merge and namespace — using `units.tw`. |
+| `units.tw` | The module `modules.tw` imports (not meant to run on its own). |
+| `cookbook.tw` | Nine small complete programs: word counts, palindromes, a Caesar cipher, a prime sieve, matrix transpose, run-length encoding, and more. |
+| `fibonacci.tw` | Recursion plus first-class functions and higher-order builtins. |
+| `fizzbuzz.tw` | Loops and branching on the classic puzzle. |
+| `words.tw` | Text processing with `split`/`join`/`map`/`filter`. |
+| `io.tw` | Reading stdin and reading/writing files (native builds). |
+
+Start with `tw examples/basics.tw`, then read them in the order above.
+
 ## Syntax reference
 
 ### Comments

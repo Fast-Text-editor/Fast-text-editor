@@ -1,0 +1,95 @@
+# ===========================================================================
+# TextWrite control flow — branches and every kind of loop.
+#
+# Run it with:   tw control_flow.tw
+# ===========================================================================
+
+# --- if / else if / else ---------------------------------------------------
+fn classify(score) {
+    if score >= 90 {
+        return "A"
+    } else if score >= 80 {
+        return "B"
+    } else if score >= 70 {
+        return "C"
+    } else {
+        return "keep trying"
+    }
+}
+
+for score in [95, 85, 75, 55] {
+    print "{score} -> {classify(score)}"
+}
+
+# A one-line body needs no braces on their own line; statements are separated
+# by newlines or by a `;`.
+if 2 > 1 { print "one-liner" }
+let a = 1; let b = 2; print "semicolons:", a + b
+
+# --- while ----------------------------------------------------------------
+let n = 1
+while n < 5 {
+    print "while  :", n
+    n += 1
+}
+
+# --- for over a list, a range, a string, and a map ------------------------
+for item in ["a", "b", "c"] {
+    print "list   :", item
+}
+
+# `range` takes an end, a start+end, or a start+end+step.
+for i in range(3) { print "range1 :", i }
+for i in range(2, 6) { print "range2 :", i }
+for i in range(10, 0, -3) { print "range3 :", i }
+
+for ch in "hi" {
+    print "chars  :", ch
+}
+
+let ages = { Ada: 36, Bob: 19 }
+for person in ages {                       # iterating a map gives its keys
+    print "map    : {person} is {ages[person]}"
+}
+
+# --- repeat N times -------------------------------------------------------
+repeat 3 times {
+    print "repeat :", "again"
+}
+
+# `repeat N times` is handy for building up text.
+let bar = ""
+repeat 5 times { bar += "#" }
+print "bar    :", bar
+
+# --- break and continue ---------------------------------------------------
+for i in range(10) {
+    if i is 5 { break }        # leave the loop entirely
+    if i % 2 is 0 { continue } # skip the rest of this iteration
+    print "odd    :", i
+}
+
+# They work in `while` and `repeat` too.
+let tries = 0
+while true {
+    tries += 1
+    if tries >= 3 { break }
+}
+print "tries  :", tries
+
+# --- Nesting and labels-free control --------------------------------------
+# Build a small multiplication table.
+for row in range(1, 4) {
+    let cells = []
+    for col in range(1, 4) {
+        push(cells, str(row * col))
+    }
+    print "table  :", join(cells, " ")
+}
+
+# Guard clauses keep deep nesting out of functions.
+fn safe_divide(x, y) {
+    if y is 0 { return none }
+    return x / y
+}
+print "divide :", safe_divide(10, 2), safe_divide(10, 0)

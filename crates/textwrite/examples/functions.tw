@@ -1,0 +1,104 @@
+# ===========================================================================
+# TextWrite functions — declarations, recursion, closures, and higher order.
+#
+# Run it with:   tw functions.tw
+# ===========================================================================
+
+# --- Declaring and calling -------------------------------------------------
+# A function is a value bound with `fn`. `return` exits; falling off the end
+# returns `none`. Parentheses are optional for a bare-name call statement.
+fn add(a, b) {
+    return a + b
+}
+print "add    :", add(2, 3)
+print "type   :", type(add), type(fn() { return 1 })   # function function
+
+fn greet(who) {
+    print "Hello, {who}!"
+}
+greet("Ada")                 # parentheses...
+greet "Bob"                  # ...or none — the same statement
+
+# A function with no `return` yields `none`.
+fn log_it(message) {
+    print "  (log) {message}"
+}
+print "returns:", log_it("note")
+
+# --- Recursion -------------------------------------------------------------
+fn factorial(n) {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+print "fact    :", factorial(5)          # 120
+
+fn fib(n) {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+print "fib     :", map(range(10), fn(n) { return fib(n) })
+
+# Mutual recursion works because names resolve at call time.
+fn is_even(n) {
+    if n is 0 { return true }
+    return is_odd(n - 1)
+}
+fn is_odd(n) {
+    if n is 0 { return false }
+    return is_even(n - 1)
+}
+print "mutual  :", is_even(10), is_odd(10)
+
+# --- Closures --------------------------------------------------------------
+# A nested function captures the variables around it, and can keep changing
+# them after the outer call has returned.
+fn make_counter() {
+    let count = 0
+    return fn() {
+        count += 1
+        return count
+    }
+}
+
+let tick = make_counter()
+print "counter :", tick(), tick(), tick()   # 1 2 3
+
+let other = make_counter()                  # a fresh, independent closure
+print "fresh   :", other()                  # 1
+
+# --- Functions as values ---------------------------------------------------
+# Store them in variables, lists, and maps, then call through the variable.
+let double = fn(x) { return x * 2 }
+print "double  :", double(21)
+
+let ops = {
+    add: fn(a, b) { return a + b },
+    sub: fn(a, b) { return a - b },
+}
+print "map call:", ops["add"](4, 5), ops.sub(10, 3)
+
+let steps = [fn(x) { return x + 1 }, fn(x) { return x * 10 }]
+let value = 4
+for step in steps {
+    value = step(value)
+}
+print "pipeline:", value                    # (4 + 1) * 10 = 50
+
+# --- Higher-order functions ------------------------------------------------
+fn apply_twice(f, x) {
+    return f(f(x))
+}
+print "twice   :", apply_twice(fn(x) { return x + 3 }, 1)   # 7
+
+fn compose(f, g) {
+    return fn(x) { return f(g(x)) }
+}
+let shout = compose(fn(s) { return s + "!" }, fn(s) { return upper(s) })
+print "compose :", shout("hi")              # HI!
+
+# Defaults have no dedicated syntax; `or` supplies a fallback value.
+fn with_default(name) {
+    let label = name or "anonymous"
+    return label
+}
+print "default :", with_default(none), with_default("Grace")

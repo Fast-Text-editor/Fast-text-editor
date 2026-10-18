@@ -1,0 +1,39 @@
+# requires: stdin and filesystem
+# ===========================================================================
+# TextWrite I/O — reading the keyboard and touching files (native builds).
+#
+# This example needs stdin and a writable directory, so the test suite only
+# *parses* it (note the `# requires:` marker above) instead of running it.
+# Run it yourself with:   tw io.tw
+# ===========================================================================
+
+# --- Standard input --------------------------------------------------------
+# `input(prompt)` writes the optional prompt and returns the next line typed
+# at the keyboard (without its newline), or `none` when input runs out.
+let name = input("What is your name? ")
+let who = name or "stranger"
+print "Hello, {who}!"
+
+# --- Files -----------------------------------------------------------------
+# These builtins exist in native builds and are absent in WebAssembly.
+let path = "example-output.txt"
+
+write_file(path, "first line\n")        # create or overwrite the file
+append_file(path, "second line\n")      # add to the end of it
+print "exists :", exists(path)          # true
+print "read   :", read_file(path)       # the whole file, as one string
+
+# A common pairing: split a file into lines and process them.
+for line in split(read_file(path), "\n") {
+    if len(line) > 0 {
+        print "line   :", upper(line)
+    }
+}
+
+# `read_file` raises an error when the file is missing, so check with `exists`
+# first whenever the file might not be there.
+if exists("definitely-missing.txt") {
+    print "unexpected"
+} else {
+    print "missing: handled without an error"
+}

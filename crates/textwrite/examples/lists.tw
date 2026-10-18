@@ -1,0 +1,85 @@
+# ===========================================================================
+# TextWrite lists — building, changing, searching, sorting, and folding.
+#
+# Run it with:   tw lists.tw
+# ===========================================================================
+
+# --- Literals and indexing -------------------------------------------------
+let xs = [3, 1, 2]
+print "list   :", xs
+print "len    :", len(xs)
+print "index  :", xs[0], xs[2], xs[-1]   # negative counts from the end
+print "slice  :", slice(xs, 0, 2)        # [3, 1]
+print "first  :", first(xs), last(xs)    # 3 2
+
+# Lists are mutable: index assignment replaces in place.
+xs[0] = 30
+print "assign :", xs                     # [30, 1, 2]
+
+# A list can hold any mix of values, including other lists.
+let nested = [[1, 2], [3, 4], "text"]
+print "nested :", nested, nested[0][1], nested[2]
+
+# --- Adding and removing ---------------------------------------------------
+let stack = []
+push(stack, 1)                  # append; returns the list, mutates in place
+push(stack, 2)
+print "push   :", stack
+
+let top = pop(stack)            # remove and return the last item
+print "pop    :", top, stack
+
+insert(stack, 0, "first")       # insert(index, value)
+print "insert :", stack
+
+let removed = remove(stack, 0)  # remove and return the item at an index
+print "remove :", removed, stack
+
+# `pop`/`remove` with a negative index count from the end; out-of-range
+# indices return `none` rather than failing.
+print "safety :", pop([]), remove([1], 9)
+
+# --- Searching -------------------------------------------------------------
+let words = ["alpha", "beta", "gamma", "beta"]
+print "in     :", contains(words, "beta"), contains(words, "delta")
+print "indexof:", index_of(words, "gamma")   # 2, or -1 when absent
+print "count  :", len(filter(words, fn(w) { return w is "beta" }))
+
+# --- Ordering --------------------------------------------------------------
+print "sort   :", sort(words)
+print "reverse:", reverse(words)
+
+let people = [
+    { name: "Ada",  age: 36 },
+    { name: "Bob",  age: 19 },
+    { name: "Cleo", age: 27 },
+]
+# `sort_by(list, cmp)` uses a comparator that returns a number; a positive
+# result swaps the two items.
+let by_age = sort_by(people, fn(a, b) { return a.age - b.age })
+print "by_age :", map(by_age, fn(p) { return p.name })   # ["Bob", "Cleo", "Ada"]
+
+# --- Functional style ------------------------------------------------------
+# map/filter/reduce/each take a function (named or anonymous). They also work
+# on strings and on the keys of a map.
+let numbers = range(1, 11)
+print "map    :", map(numbers, fn(n) { return n * n })
+print "filter :", filter(numbers, fn(n) { return n % 2 is 0 })
+print "reduce :", reduce(numbers, fn(sum, n) { return sum + n }, 0)
+
+let total = 0
+each(numbers, fn(n) { total += n })        # side effects; returns nothing
+print "each   :", total
+
+print "any/all:", any(numbers, fn(n) { return n > 9 }),
+    all(numbers, fn(n) { return n > 0 })
+
+# Higher-order functions compose: square the even numbers and sum them.
+let evens = filter(numbers, fn(n) { return n % 2 is 0 })
+let squares = map(evens, fn(n) { return n * n })
+let pipeline = reduce(squares, fn(a, b) { return a + b }, 0)
+print "pipeline:", pipeline                # 4 + 16 + 36 + 64 + 100 = 220
+
+# --- Joining ---------------------------------------------------------------
+print "join   :", join(["one", "two", "three"], ", ")
+print "join   :", join(map(numbers, fn(n) { return str(n) }), "")

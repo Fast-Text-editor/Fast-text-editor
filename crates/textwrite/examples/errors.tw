@@ -1,0 +1,68 @@
+# ===========================================================================
+# TextWrite errors — checking assumptions with assert, and raising your own.
+#
+# Run it with:   tw errors.tw
+# ===========================================================================
+
+# --- assert ----------------------------------------------------------------
+# `assert(condition)` does nothing when the condition is truthy and stops the
+# program with a message when it is not. Pass a second argument to explain.
+assert(1 + 1 is 2)
+assert("abc".len() is 3, "length is counted in characters")
+
+fn checked_divide(a, b) {
+    assert(b is not 0, "cannot divide {a} by zero")
+    return a / b
+}
+print "divide :", checked_divide(10, 4)
+
+# --- Raising your own errors ----------------------------------------------
+# `error(message)` raises a runtime error, which is how a function reports
+# that it cannot go on. `exit(code)` stops the whole program immediately.
+fn parse_positive(text) {
+    let n = int(text)                  # int("x") would itself be an error
+    if n <= 0 {
+        error "expected a positive number, got {n}"
+    }
+    return n
+}
+print "parse  :", parse_positive("12")
+
+# The calls below are here to show the shape of a failure, but a raised error
+# ends the program, so they are commented out:
+#
+#   error "something went wrong"
+#     errors.tw: runtime error (line 30, column 1): something went wrong
+#        30 | error "something went wrong"
+#           | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
+#   parse_positive("0")
+#     runtime error: expected a positive number, got 0
+#
+#   exit(2)                            # stop now with status code 2
+
+# --- Errors the runtime raises for you ------------------------------------
+# These are the mistakes worth guarding against:
+#   * unknown variable / unknown function
+#   * reading a missing map key:  { a: 1 }.b
+#   * indexing past the end:      [1, 2][5]
+#   * calling a builtin with the wrong type:  len(1)
+#   * division or modulo by zero
+#   * a `break`/`continue` outside a loop
+#   * runaway recursion (a depth guard reports it)
+
+# --- A defensive pattern ---------------------------------------------------
+# Return `none` for the no-result case, and let the caller decide what to do.
+fn find_first_even(numbers) {
+    for n in numbers {
+        if n % 2 is 0 { return n }
+    }
+    return none
+}
+
+let found = find_first_even([1, 3, 4, 7])
+if found is none {
+    print "no even number"
+} else {
+    print "first even:", found
+}

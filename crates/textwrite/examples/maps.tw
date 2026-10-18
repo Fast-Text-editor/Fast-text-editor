@@ -1,0 +1,61 @@
+# ===========================================================================
+# TextWrite maps — string-keyed collections that keep insertion order.
+#
+# Run it with:   tw maps.tw
+# ===========================================================================
+
+# --- Literals --------------------------------------------------------------
+# Keys written as bare words become strings; quote them for anything else.
+let person = { name: "Ada", age: 36 }
+let settings = { "line-length": 80, theme: "dark" }
+print "person :", person
+print "settings:", settings
+
+# --- Reading ---------------------------------------------------------------
+# Dot access and index access are equivalent. Reading a missing key is an
+# error — it is not silently `none` — so prefer `get` with a default when a
+# key might be absent.
+print "dot    :", person.name, person["name"]
+print "missing:", get(person, "email", "none given")
+print "has    :", has(person, "age"), has(person, "email")
+print "len    :", len(person)
+
+# --- Writing ---------------------------------------------------------------
+person.age = 37                       # dot assignment replaces a value
+person["city"] = "London"             # index assignment inserts a new key
+print "updated:", person
+
+# --- Keys, values, and iteration ------------------------------------------
+# Order is the order keys were first inserted.
+print "keys   :", keys(person)
+print "values :", values(person)
+
+for key in person {                   # iterating a map yields its keys
+    print "  {key} = {get(person, key)}"
+}
+
+# The functional builtins treat a map as its sequence of keys.
+print "mapped :", map(person, fn(k) { return upper(k) })
+print "sorted :", sort(keys(person))
+
+# --- Nesting ---------------------------------------------------------------
+let catalog = {
+    fruit: { apple: 2, pear: 3 },
+    tools: ["hammer", "wrench"],
+}
+print "nested :", catalog.fruit.apple, catalog.tools[0]
+print "deep   :", get(get(catalog, "fruit"), "pear", 0)
+
+# --- Building a map in a loop ---------------------------------------------
+# There is no `push` for maps; assign each new key.
+let counts = {}
+for word in ["red", "blue", "red", "red", "blue"] {
+    counts[word] = get(counts, word, 0) + 1
+}
+print "counts :", counts                # {red: 3, blue: 2}
+print "top    :", get(counts, "red")
+
+# --- Equality --------------------------------------------------------------
+# Equality is structural and ignores key order.
+print "equal  :", { a: 1, b: 2 } is { b: 2, a: 1 }
+print "type   :", type(person), type(keys(person))

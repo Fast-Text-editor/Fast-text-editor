@@ -22,6 +22,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Language-server commands** (TUI + `fast-text-lsp`): rename, format, code
   actions and document symbols, all applied through workspace edits.
 - **More example plugins**: `text_tools.tw`, `markdown.tw`, and `notes.tw`.
+- **TextWrite example suite**: `crates/textwrite/examples/` now has a runnable
+  program for every area of the language — `basics`, `operators`, `strings`,
+  `lists`, `maps`, `control_flow`, `functions`, `math_and_types`, `errors`,
+  `modules` (with the `units` module), file I/O, and a `cookbook` of nine small
+  complete programs. `tests/language.rs` runs them all, and the language
+  reference lists them in reading order.
 - **Update notifications** (`fast-text-update`, TUI + GUI): at startup the
   editor asks GitHub for the newest release, throttled to once a day and
   silent when offline, and offers a window naming the version with **Yes,

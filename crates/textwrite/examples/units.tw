@@ -1,0 +1,40 @@
+# ===========================================================================
+# units.tw — a TextWrite module (a plain `.tw` file used with `import`).
+#
+# This file is not meant to be run on its own — see `modules.tw`, which
+# imports it. A module's exports are its top-level `fn`s and `let`s, it runs
+# at most once per interpreter, and import cycles are reported as errors.
+# ===========================================================================
+
+# Exported constants (top-level `let`s).
+let FREEZING_C = 0
+let KILOMETRES_PER_MILE = 1.609344
+
+# Exported functions.
+fn celsius_to_fahrenheit(c) {
+    return c * 9 / 5 + 32
+}
+
+fn fahrenheit_to_celsius(f) {
+    return (f - 32) * 5 / 9
+}
+
+fn km_to_miles(km) {
+    return km / KILOMETRES_PER_MILE
+}
+
+fn miles_to_km(miles) {
+    return miles * KILOMETRES_PER_MILE
+}
+
+fn describe_temp(c) {
+    if c <= FREEZING_C {
+        return "freezing"
+    } else if c < 15 {
+        return "cold"
+    } else if c < 25 {
+        return "mild"
+    } else {
+        return "warm"
+    }
+}

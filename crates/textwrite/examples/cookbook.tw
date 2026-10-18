@@ -1,0 +1,130 @@
+# ===========================================================================
+# TextWrite cookbook — small, complete programs that use the whole language.
+#
+# Run it with:   tw cookbook.tw
+# ===========================================================================
+
+# --- 1. Word frequency -----------------------------------------------------
+fn word_counts(sentence) {
+    let counts = {}
+    for word in split(lower(sentence), " ") {
+        counts[word] = get(counts, word, 0) + 1
+    }
+    return counts
+}
+
+let counts = word_counts("the cat sat on the mat the end")
+print "words  :", counts
+for word in sort(keys(counts)) {
+    print "  {word}: {counts[word]}"
+}
+
+# --- 2. Palindromes --------------------------------------------------------
+fn is_palindrome(text) {
+    let letters = filter(lower(text), fn(c) { return c is not " " })
+    return join(letters, "") is join(reverse(letters), "")
+}
+print "pal    :", is_palindrome("A man a plan a canal Panama")  # true
+print "pal    :", is_palindrome("hello")                        # false
+
+# --- 3. Caesar cipher ------------------------------------------------------
+let alphabet = "abcdefghijklmnopqrstuvwxyz"
+
+fn shift_char(c, n) {
+    let i = index_of(alphabet, c)
+    if i < 0 { return c }                 # leave spaces and punctuation alone
+    return alphabet[(i + n) % 26]
+}
+
+fn caesar(text, n) {
+    let out = ""
+    for c in lower(text) {
+        out += shift_char(c, n)
+    }
+    return out
+}
+print "caesar :", caesar("attack at dawn", 3)     # dwwdfn dw gdzq
+
+# --- 4. Primes (sieve of Eratosthenes) -------------------------------------
+fn primes_below(limit) {
+    let prime = []
+    for i in range(limit) { push(prime, true) }
+    let found = []
+    for n in range(2, limit) {
+        if prime[n] {
+            push(found, n)
+            let m = n * n
+            while m < limit {
+                prime[m] = false
+                m += n
+            }
+        }
+    }
+    return found
+}
+print "primes :", primes_below(30)
+
+# --- 5. Matrix transpose ---------------------------------------------------
+fn transpose(matrix) {
+    let out = []
+    for c in range(len(matrix[0])) {
+        let row = []
+        for r in range(len(matrix)) {
+            push(row, matrix[r][c])
+        }
+        push(out, row)
+    }
+    return out
+}
+print "transp :", transpose([[1, 2, 3], [4, 5, 6]])
+
+# --- 6. Run-length encoding ------------------------------------------------
+fn run_length(text) {
+    let out = []
+    let run = 0
+    let prev = ""
+    for c in text {
+        if c is prev {
+            run += 1
+        } else {
+            if run > 0 { push(out, "{run}{prev}") }
+            prev = c
+            run = 1
+        }
+    }
+    if run > 0 { push(out, "{run}{prev}") }
+    return join(out, "")
+}
+print "rle    :", run_length("aaabbbccccd")     # 3a3b4c1d
+
+# --- 7. Temperature table --------------------------------------------------
+for c in range(-40, 41, 20) {
+    let f = round(c * 9 / 5 + 32)
+    print "temp   : {c}C = {f}F"
+}
+
+# --- 8. Flatten a nested list ---------------------------------------------
+fn flatten(items) {
+    let out = []
+    for item in items {
+        if type(item) is "list" {
+            for inner in flatten(item) { push(out, inner) }
+        } else {
+            push(out, item)
+        }
+    }
+    return out
+}
+print "flatten:", flatten([1, [2, [3, 4]], 5])
+
+# --- 9. Title case ---------------------------------------------------------
+fn title_case(text) {
+    let words = []
+    for word in split(text, " ") {
+        if len(word) > 0 {
+            push(words, upper(word[0]) + slice(word, 1))
+        }
+    }
+    return join(words, " ")
+}
+print "title  :", title_case("the quick brown fox")
