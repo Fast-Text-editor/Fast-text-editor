@@ -64,3 +64,21 @@ jobs:
       - run: sh -n install.sh
       - run: sh install.sh --help
       - run: sh install.sh --dry-run --from-source
+
+  install-script-windows:
+    name: install.ps1 syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the script
+        shell: pwsh
+        run: |
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            'install.ps1', [ref]$null, [ref]$parseErrors) | Out-Null
+          if ($parseErrors) {
+            $parseErrors | ForEach-Object { Write-Error "$($_.Extent.StartLineNumber): $($_.Message)" }
+            exit 1
+          }
+      - run: pwsh -NoProfile -File ./install.ps1 -Help
+      - run: pwsh -NoProfile -File ./install.ps1 -DryRun -FromSource

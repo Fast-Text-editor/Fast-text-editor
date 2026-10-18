@@ -32,6 +32,8 @@ SOURCE_DIR=""
 # Filled in later.
 SUDO=""
 TMP_DIR=""
+# Windows shells (Git Bash, MSYS2, Cygwin) need the .exe suffix.
+EXE_SUFFIX=""
 
 BINARIES="fast-text ft textwrite tw"
 GUI_BINARY="fast-text-gui"
@@ -260,6 +262,15 @@ detect_target() {
     case "$os" in
     Linux) os_part="unknown-linux-gnu" ;;
     Darwin) os_part="apple-darwin" ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+        # Git Bash, MSYS2 and Cygwin can drive a source build, but the
+        # prebuilt archives for Windows are ZIPs that install.ps1 unpacks.
+        EXE_SUFFIX=".exe"
+        if [ "$FROM_SOURCE" != 1 ]; then
+            die "this looks like a Windows shell; run install.ps1 from PowerShell for the prebuilt build, or pass --from-source to build here"
+        fi
+        os_part="pc-windows-msvc"
+        ;;
     *) die "unsupported operating system '$os'; try --from-source" ;;
     esac
 
@@ -357,9 +368,12 @@ build_from_source() {
 
     mkdir -p "$TMP_DIR/release"
     for name in $BINARIES $GUI_BINARY; do
-        if [ -f "$src/target/release/$name" ]; then
-            cp "$src/target/release/$name" "$TMP_DIR/release/$name"
-        fi
+        for candidate in "$name$EXE_SUFFIX" "$name"; do
+            if [ -f "$src/target/release/$candidate" ]; then
+                cp "$src/target/release/$candidate" "$TMP_DIR/release/$name"
+                break
+            fi
+        done
     done
 }
 
@@ -368,7 +382,7 @@ build_from_source() {
 # --------------------------------------------------------------------------
 
 find_binary() { # name dir
-    found="$(find "$2" -type f -name "$1" 2>/dev/null | head -n 1)"
+    found="$(find "$2" -type f \( -name "$1" -o -name "$1.exe" \) 2>/dev/null | head -n 1)"
     printf '%s\n' "$found"
 }
 
@@ -495,8 +509,8 @@ install_binaries() {
             warn "'$name' was not produced; skipping"
             continue
         fi
-        copy_file "$src_file" "$BIN_DIR/$name"
-        printf '%s\n' "$BIN_DIR/$name" >>"$TMP_DIR/manifest"
+        copy_file "$src_file" "$BIN_DIR/$name$EXE_SUFFIX"
+        printf '%s\n' "$BIN_DIR/$name$EXE_SUFFIX" >>"$TMP_DIR/manifest"
         installed="$installed $name"
     done
 
@@ -505,8 +519,8 @@ install_binaries() {
         if [ -z "$src_file" ]; then
             warn "'$GUI_BINARY' was not produced; skipping"
         else
-            copy_file "$src_file" "$BIN_DIR/$GUI_BINARY"
-            printf '%s\n' "$BIN_DIR/$GUI_BINARY" >>"$TMP_DIR/manifest"
+            copy_file "$src_file" "$BIN_DIR/$GUI_BINARY$EXE_SUFFIX"
+            printf '%s\n' "$BIN_DIR/$GUI_BINARY$EXE_SUFFIX" >>"$TMP_DIR/manifest"
             installed="$installed $GUI_BINARY"
         fi
     fi
@@ -534,9 +548,9 @@ uninstall() {
     else
         warn "no manifest at $manifest; removing the known binaries instead"
         for name in $BINARIES $GUI_BINARY; do
-            if [ -e "$BIN_DIR/$name" ]; then
-                run_priv rm -f "$BIN_DIR/$name"
-                log "  removed $BIN_DIR/$name"
+            if [ -e "$BIN_DIR/$name$EXE_SUFFIX" ]; then
+                run_priv rm -f "$BIN_DIR/$name$EXE_SUFFIX"
+                log "  removed $BIN_DIR/$name$EXE_SUFFIX"
             fi
         done
     fi

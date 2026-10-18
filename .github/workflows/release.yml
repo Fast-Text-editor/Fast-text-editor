@@ -1,13 +1,15 @@
 name: Release
 
 # Building a tag like `v0.1.0` produces the prebuilt archives that `install.sh`
-# downloads, one per supported target:
+# and `install.ps1` download, one per supported target:
 #
 #   fast-text-<target>.tar.gz   (fast-text, ft, textwrite, tw, fast-text-gui)
+#   fast-text-<target>.zip      the same, for Windows
 #
 # `install.sh` resolves `releases/latest/download/fast-text-<target>.tar.gz`
 # for a default install and `releases/download/<tag>/fast-text-<target>.tar.gz`
-# for `--version <tag>`, so the asset name deliberately has no version in it.
+# for `--version <tag>`; `install.ps1` uses the `.zip` asset the same way, so
+# the asset name deliberately has no version in it.
 
 on:
   push:
@@ -32,6 +34,7 @@ jobs:
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
           - { target: x86_64-apple-darwin, os: macos-latest }
           - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +57,9 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p fast-text-tui -p textwrite -p fast-text-gui
 
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        id: package
         shell: bash
         run: |
           set -euo pipefail
@@ -66,12 +71,30 @@ jobs:
           done
           cp LICENSE README.md "dist/${name}/"
           tar -C dist -czf "${name}.tar.gz" "${name}"
-          echo "Packed ${name}.tar.gz"
+          echo "asset=${name}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      # Windows gets a .zip: `install.ps1` unpacks it with Expand-Archive,
+      # which needs no extra tooling on a stock Windows box.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = '${{ matrix.target }}'
+          $name = "fast-text-$target"
+          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
+          foreach ($bin in 'fast-text', 'ft', 'textwrite', 'tw', 'fast-text-gui') {
+              Copy-Item "target/$target/release/$bin.exe" "dist/$name/$bin.exe"
+          }
+          Copy-Item LICENSE, README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "$name.zip"
+          "asset=$name.zip" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v4
         with:
           name: fast-text-${{ matrix.target }}
-          path: fast-text-${{ matrix.target }}.tar.gz
+          path: ${{ steps.package.outputs.asset }}
           if-no-files-found: error
 
   release:
@@ -89,7 +112,8 @@ jobs:
         working-directory: artifacts
         run: |
           set -euo pipefail
-          for f in *.tar.gz; do
+          shopt -s nullglob
+          for f in *.tar.gz *.zip; do
             sha256sum "$f" > "$f.sha256"
           done
           cat ./*.sha256
@@ -101,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(artifacts/*.tar.gz artifacts/*.sha256)
+          assets=(artifacts/*.tar.gz artifacts/*.zip artifacts/*.sha256)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${assets[@]}" --clobber
           else
