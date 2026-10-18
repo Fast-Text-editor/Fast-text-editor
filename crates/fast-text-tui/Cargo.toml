@@ -7,9 +7,11 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 rust-version.workspace = true
 keywords.workspace = true
-categories.workspace = true
+categories = ["command-line-utilities", "text-editors", "development-tools"]
 default-run = "fast-text"
 
 [lib]

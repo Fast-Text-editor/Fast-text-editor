@@ -7,7 +7,11 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 rust-version.workspace = true
+keywords.workspace = true
+categories = ["graphics", "gui", "command-line-utilities"]
 
 [[bin]]
 name = "fast-text-gui"
