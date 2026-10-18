@@ -33,7 +33,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Installer update support**: `install.sh --check` / `--update` and
   `install.ps1 -Check` / `-Update` compare the recorded installation with the
   newest release, and the installed version is kept in
-  `PREFIX/share/fast-text/installed-version`.
+  `PREFIX/share/fast-text/installed-version`. Simply re-running the installer
+  detects the existing copy — including one found on `PATH`, when no
+  `--prefix`/`-Prefix` is given — and upgrades it in place, keeping the
+  desktop app if it was installed before.
 
 ## [0.1.0]
 

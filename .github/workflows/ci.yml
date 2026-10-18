@@ -85,6 +85,30 @@ jobs:
           printf '0.1.0\n' >"$prefix/share/fast-text/installed-version"
           FAST_TEXT_LATEST_TAG=v0.2.0 sh install.sh --update --dry-run --prefix "$prefix" 2>&1 |
             grep -q "Updating from v0.1.0 to v0.2.0"
+      - name: A plain run over an existing install is an upgrade (offline)
+        run: |
+          prefix="$(mktemp -d)"
+          mkdir -p "$prefix/share/fast-text"
+          printf '0.1.0\n' >"$prefix/share/fast-text/installed-version"
+          out="$(FAST_TEXT_LATEST_TAG=v0.2.0 sh install.sh --dry-run --prefix "$prefix" 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "already installed under"
+          printf '%s\n' "$out" | grep -q "Updating from v0.1.0 to v0.2.0"
+      - name: A plain run upgrades the copy already on PATH (offline)
+        run: |
+          root="$(mktemp -d)"
+          bin="$root/bin"
+          mkdir -p "$bin" "$root/share/fast-text"
+          printf '0.1.0\n' >"$root/share/fast-text/installed-version"
+          cat >"$bin/fast-text" <<'SH'
+          #!/bin/sh
+          echo "fast-text 0.1.0"
+          SH
+          chmod +x "$bin/fast-text"
+          out="$(PATH="$bin:$PATH" FAST_TEXT_LATEST_TAG=v0.2.0 sh install.sh --dry-run 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "Found Fast Text already installed at $bin"
+          printf '%s\n' "$out" | grep -q "Updating from v0.1.0 to v0.2.0"
 
   install-script-windows:
     name: install.ps1 syntax
@@ -122,4 +146,10 @@ jobs:
           $env:FAST_TEXT_LATEST_TAG = 'v0.2.0'
           $out = (& ./install.ps1 -Update -DryRun -Prefix $prefix 2>&1 | Out-String)
           Write-Output $out
+          if ($out -notmatch 'Updating from v0\.1\.0 to v0\.2\.0') { Write-Error 'expected an update plan'; exit 1 }
+
+          # A plain run over the existing install is also an upgrade.
+          $out = (& ./install.ps1 -DryRun -Prefix $prefix 2>&1 | Out-String)
+          Write-Output $out
+          if ($out -notmatch 'already installed under') { Write-Error 'expected an upgrade notice'; exit 1 }
           if ($out -notmatch 'Updating from v0\.1\.0 to v0\.2\.0') { Write-Error 'expected an update plan'; exit 1 }

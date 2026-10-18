@@ -66,6 +66,7 @@ $GuiBinary = 'fast-text-gui'
 $ErrorActionPreference = 'Stop'
 $script:Manifest = @()
 $script:UpToDate = $false
+$script:Adopted = $false
 
 # --------------------------------------------------------------------------
 # Output helpers
@@ -130,6 +131,11 @@ Environment:
   FAST_TEXT_LATEST_TAG                  treat this as the newest release,
                                         skipping the GitHub query (for tests)
 
+Re-running the installer over an existing installation updates that copy in
+place (keeping the desktop app if it was installed before): -Check reports
+whether a newer release exists, and -Update installs it only when there is
+one.
+
 Examples:
   iwr -useb .../install.ps1 | iex
   .\install.ps1 -Gui -AddToPath
@@ -154,6 +160,33 @@ function Get-AbsolutePath([string]$Path) {
         return [System.IO.Path]::GetFullPath($expanded)
     }
     return [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $expanded))
+}
+
+# When no location was named but Fast Text is already on PATH, aim an install
+# at that copy so a plain run upgrades what the shell actually finds instead of
+# quietly laying down a second copy elsewhere.
+#
+# -Uninstall only follows the PATH copy when a manifest or version record
+# proves it is one we installed — never a copy that cargo or another packager
+# put there.
+function Use-ExistingLocation {
+    if ($Check) { return }
+    if ($Prefix -or $BinDir) { return }
+    $found = Get-Command $Program -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $found) { return }
+    $candidateBin = Split-Path -Parent $found.Source
+    $candidatePrefix = Split-Path -Parent $candidateBin
+
+    if ($Uninstall) {
+        $manifest = Join-Path $candidatePrefix 'installed-files.txt'
+        $record = Join-Path $candidatePrefix 'installed-version.txt'
+        if (-not (Test-Path $manifest) -and -not (Test-Path $record)) { return }
+    }
+
+    $script:BinDir = $candidateBin
+    $script:Prefix = $candidatePrefix
+    $script:Adopted = $true
 }
 
 # Fills $Prefix and $BinDir.
@@ -182,6 +215,9 @@ function Resolve-Dirs {
     }
     $script:ManifestPath = Join-Path $script:Prefix 'installed-files.txt'
     $verb = if ($Uninstall) { 'Removing from' } elseif ($Check) { 'Looking at' } else { 'Installing into' }
+    if ($script:Adopted) {
+        Write-Log "Found Fast Text already installed at $($script:BinDir); updating it in place"
+    }
     Write-Log "$verb $($script:BinDir)"
 }
 
@@ -600,9 +636,28 @@ function Write-VersionFile {
 # Prints the installed version and the newest release, plus what to do next.
 function Invoke-Check {
     $current = Get-InstalledVersion
+    $onPath = $null
+    if (-not $current) {
+        # No record here, but Fast Text may have been installed another way
+        # (cargo install, a package manager, a differently-prefixed run).
+        $found = Get-Command $Program -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($found) {
+            try {
+                $out = & $found.Source --version 2>$null
+                if ($out) {
+                    $current = ([string]$out).Trim() -replace '^\S+\s+', ''
+                    Write-Log "Found $Program at $($found.Source)"
+                    $onPath = $found.Source
+                }
+            } catch {
+                $current = $null
+            }
+        }
+    }
     $latest = (Get-LatestTag).TrimStart('v', 'V')
     if (-not $current) {
-        Write-Log "No Fast Text installation was found under $($script:Prefix)."
+        Write-Log "No Fast Text installation was found under $($script:Prefix) (or on PATH)."
         Write-Log "The newest release is v$latest."
         Write-Log "Install it with: .\install.ps1 -Version v$latest -Prefix '$($script:Prefix)'"
         return
@@ -610,9 +665,59 @@ function Invoke-Check {
     $current = $current.TrimStart('v', 'V')
     if ((Compare-Version $latest $current) -gt 0) {
         Write-Log "Update available: v$current is installed, v$latest has been released."
-        Write-Log "Install it with: .\install.ps1 -Update -Prefix '$($script:Prefix)'"
+        if ($onPath) {
+            Write-Log "Install it with: .\install.ps1 -Update"
+        } else {
+            Write-Log "Install it with: .\install.ps1 -Update -Prefix '$($script:Prefix)'"
+        }
     } else {
         Write-Log "Fast Text v$current is up to date (newest release: v$latest)."
+    }
+}
+
+# Keeps -Gui when an earlier run installed the desktop app, so an update does
+# not silently drop it.
+function Use-GuiFromManifest {
+    if ($Gui) { return }
+    if (-not (Test-Path $script:ManifestPath)) { return }
+    $hasGui = Get-Content -Path $script:ManifestPath -ErrorAction SilentlyContinue |
+        Where-Object { $_ -like "*$GuiBinary*" }
+    if ($hasGui) {
+        $script:Gui = $true
+        Write-Log 'The desktop app was installed before; it will be updated as well'
+    }
+}
+
+# A plain run over an existing installation is an upgrade: reuse its version
+# record, keep the desktop app if it was installed, and install the newest
+# release. This is what makes simply re-running the installer deliver new
+# features to the copy that is already there.
+function Invoke-AdoptExisting {
+    $installed = Get-InstalledVersion
+    $exe = Join-Path $script:BinDir "$Program.exe"
+    if (-not $installed -and -not (Test-Path $exe)) { return }
+    if ($installed) {
+        Write-Log "Fast Text v$($installed.TrimStart('v', 'V')) is already installed under $($script:Prefix); updating it"
+    } else {
+        Write-Log "Found an existing $Program in $($script:BinDir); reinstalling over it"
+    }
+    Use-GuiFromManifest
+
+    if ($Version -ne 'latest') {
+        Write-Log "Installing $Version"
+        return
+    }
+    try {
+        $newest = (Get-LatestTag).TrimStart('v', 'V')
+    } catch {
+        Write-Log "Could not reach GitHub; installing the 'latest' release instead"
+        return
+    }
+    $script:Version = "v$newest"
+    if ($installed) {
+        Write-Log "Updating from v$($installed.TrimStart('v', 'V')) to v$newest"
+    } else {
+        Write-Log "Installing v$newest"
     }
 }
 
@@ -637,16 +742,7 @@ function Invoke-Update {
         Write-Log "Installing the newest release, v$latest"
     }
     $script:Version = "v$latest"
-
-    # Refresh the desktop app too when an earlier run installed it.
-    if (-not $Gui -and (Test-Path $script:ManifestPath)) {
-        $hasGui = Get-Content -Path $script:ManifestPath -ErrorAction SilentlyContinue |
-            Where-Object { $_ -like "*$GuiBinary*" }
-        if ($hasGui) {
-            $script:Gui = $true
-            Write-Log 'The desktop app was installed before; it will be updated as well'
-        }
-    }
+    Use-GuiFromManifest
 }
 
 # --------------------------------------------------------------------------
@@ -659,6 +755,7 @@ function main {
         return
     }
 
+    Use-ExistingLocation
     Resolve-Dirs
 
     if ($Uninstall) {
@@ -674,6 +771,8 @@ function main {
     if ($Update) {
         Invoke-Update
         if ($script:UpToDate) { return }
+    } else {
+        Invoke-AdoptExisting
     }
 
     $script:TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("$Program-install-" + [Guid]::NewGuid().ToString('N'))

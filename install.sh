@@ -34,6 +34,8 @@ SOURCE_DIR=""
 # Filled in later.
 SUDO=""
 TMP_DIR=""
+# Set when the install directory was taken from an existing install on PATH.
+ADOPTED=0
 # Windows shells (Git Bash, MSYS2, Cygwin) need the .exe suffix.
 EXE_SUFFIX=""
 
@@ -110,6 +112,11 @@ Environment:
   PREFIX, BIN_DIR, FAST_TEXT_VERSION   behave like the options above
   FAST_TEXT_LATEST_TAG                 treat this as the newest release,
                                        skipping the GitHub query (for tests)
+
+Re-running the installer over an existing installation updates that copy in
+place (keeping the desktop app if it was installed before): `--check` reports
+whether a newer release exists, and `--update` installs it only when there is
+one.
 
 Examples:
   curl -fsSL .../install.sh | sh
@@ -220,6 +227,40 @@ abs_path() {
     esac
 }
 
+# When no location was named but Fast Text is already on PATH, aim an install
+# at that copy so a plain run upgrades what the shell actually finds instead of
+# quietly laying down a second copy somewhere else.
+#
+# `--uninstall` only follows the PATH copy when a manifest or version record
+# proves it is one we installed — never a copy that cargo or a package manager
+# put there.
+adopt_existing_location() {
+    if [ "$DO_CHECK" = 1 ]; then
+        return 0
+    fi
+    if [ -n "$PREFIX" ] || [ -n "$BIN_DIR" ]; then
+        return 0
+    fi
+    existing="$(command -v "$PROGRAM" 2>/dev/null || printf '')"
+    if [ -z "$existing" ] || [ ! -f "$existing" ]; then
+        return 0
+    fi
+    candidate_bin="$(abs_path "$(dirname "$existing")")"
+    candidate_prefix="$(dirname "$candidate_bin")"
+    if [ "$DO_UNINSTALL" = 1 ]; then
+        if [ -f "$candidate_prefix/share/$PROGRAM/installed-files" ] ||
+            [ -f "$candidate_prefix/share/$PROGRAM/installed-version" ]; then
+            BIN_DIR="$candidate_bin"
+            PREFIX="$candidate_prefix"
+            ADOPTED=1
+        fi
+        return 0
+    fi
+    BIN_DIR="$candidate_bin"
+    PREFIX="$candidate_prefix"
+    ADOPTED=1
+}
+
 # Fills PREFIX and BIN_DIR, then decides whether sudo is needed.
 resolve_dirs() {
     if [ -n "$BIN_DIR" ]; then
@@ -259,6 +300,9 @@ resolve_dirs() {
         verb="Looking at"
     else
         verb="Installing into"
+    fi
+    if [ "$ADOPTED" = 1 ]; then
+        log "Found Fast Text already installed at $BIN_DIR; updating it in place"
     fi
     if [ -n "$SUDO" ]; then
         command -v sudo >/dev/null 2>&1 ||
@@ -662,7 +706,7 @@ write_version_file() {
             sed -n 's/^[^ ]*[[:space:]]*//p' | head -n 1)" || version=""
     fi
     if [ -z "$version" ]; then
-        version="$(latest_tag 2>/dev/null || printf '')"
+        version="$(newest_tag 2>/dev/null || printf '')"
     fi
     version="${version#v}"
     if [ -z "$version" ]; then
@@ -682,54 +726,118 @@ write_version_file() {
 # Prints the installed version and the newest release, plus what to do next.
 check_update() {
     installed="$(read_installed_version)" || installed=""
-    if ! latest="$(latest_tag)"; then
+    on_path=""
+    if [ -z "$installed" ]; then
+        # No record here, but Fast Text may have been installed another way
+        # (cargo install, a package manager, a differently-prefixed run).
+        exe="$(command -v "$PROGRAM" 2>/dev/null || printf '')"
+        if [ -n "$exe" ]; then
+            installed="$("$exe" --version 2>/dev/null |
+                sed -n 's/^[^ ]*[[:space:]]*//p' | head -n 1)" || installed=""
+            if [ -n "$installed" ]; then
+                log "Found $PROGRAM at $exe"
+                on_path="$exe"
+            fi
+        fi
+    fi
+    if ! newest="$(newest_tag)"; then
         die "could not reach GitHub to check for a newer release"
     fi
-    latest="${latest#v}"
     if [ -z "$installed" ]; then
-        log "No Fast Text installation was found under $PREFIX."
-        log "The newest release is v$latest."
-        log "Install it with: sh install.sh --version v$latest --prefix $PREFIX"
+        log "No Fast Text installation was found under $PREFIX (or on PATH)."
+        log "The newest release is v$newest."
+        log "Install it with: sh install.sh --version v$newest --prefix $PREFIX"
         return 0
     fi
     installed="${installed#v}"
-    if version_gt "$latest" "$installed"; then
-        log "Update available: v$installed is installed, v$latest has been released."
-        log "Install it with: sh install.sh --update --prefix $PREFIX"
+    if version_gt "$newest" "$installed"; then
+        log "Update available: v$installed is installed, v$newest has been released."
+        if [ -n "$on_path" ]; then
+            log "Install it with: sh install.sh --update"
+        else
+            log "Install it with: sh install.sh --update --prefix $PREFIX"
+        fi
     else
-        log "Fast Text v$installed is up to date (newest release: v$latest)."
+        log "Fast Text v$installed is up to date (newest release: v$newest)."
+    fi
+}
+
+# Keeps `--gui` when an earlier run installed the desktop app, so an update
+# does not silently drop it.
+adopt_gui_from_manifest() {
+    if [ "$WITH_GUI" = 1 ]; then
+        return 0
+    fi
+    manifest="$PREFIX/share/$PROGRAM/installed-files"
+    if [ -f "$manifest" ] && grep -q "/$GUI_BINARY" "$manifest" 2>/dev/null; then
+        WITH_GUI=1
+        log "The desktop app was installed before; it will be updated as well"
+    fi
+}
+
+# The newest release tag, or an empty string when GitHub cannot be reached.
+newest_tag() {
+    if ! tag="$(latest_tag)"; then
+        return 1
+    fi
+    printf '%s\n' "${tag#v}"
+}
+
+# A plain run over an existing installation is an upgrade: reuse its version
+# record, keep the desktop app if it was installed, and install the newest
+# release (or the one named by --version). This is what makes simply re-running
+# the installer deliver new features to the copy that is already there.
+adopt_existing_install() {
+    installed="$(read_installed_version)" || installed=""
+    if [ -z "$installed" ] && [ ! -e "$BIN_DIR/$PROGRAM$EXE_SUFFIX" ]; then
+        return 0
+    fi
+    if [ -n "$installed" ]; then
+        log "Fast Text v${installed#v} is already installed under $PREFIX; updating it"
+    else
+        log "Found an existing $PROGRAM in $BIN_DIR; reinstalling over it"
+    fi
+    adopt_gui_from_manifest
+
+    if [ "$VERSION" != "latest" ]; then
+        log "Installing $VERSION"
+        return 0
+    fi
+    if ! newest="$(newest_tag)"; then
+        log "Could not reach GitHub; installing the 'latest' release instead"
+        return 0
+    fi
+    VERSION="v$newest"
+    if [ -n "$installed" ]; then
+        log "Updating from v${installed#v} to v$newest"
+    else
+        log "Installing v$newest"
     fi
 }
 
 # Points VERSION at the newest release when an update is actually warranted.
+# Used by `--update`, which leaves an up-to-date install alone.
 update_now() {
     if [ "$VERSION" != "latest" ]; then
         log "Updating to $VERSION"
+        adopt_gui_from_manifest
         return 0
     fi
     installed="$(read_installed_version)" || installed=""
-    if ! latest="$(latest_tag)"; then
+    if ! newest="$(newest_tag)"; then
         die "could not reach GitHub to find the newest release"
     fi
-    latest="${latest#v}"
-    if [ -n "$installed" ] && ! version_gt "$latest" "${installed#v}"; then
-        log "Fast Text v${installed#v} is already up to date (newest release: v$latest)."
+    if [ -n "$installed" ] && ! version_gt "$newest" "${installed#v}"; then
+        log "Fast Text v${installed#v} is already up to date (newest release: v$newest)."
         exit 0
     fi
     if [ -n "$installed" ]; then
-        log "Updating from v${installed#v} to v$latest"
+        log "Updating from v${installed#v} to v$newest"
     else
-        log "Installing the newest release, v$latest"
+        log "Installing the newest release, v$newest"
     fi
-    VERSION="v$latest"
-
-    # Refresh the desktop app too when an earlier run installed it.
-    manifest="$PREFIX/share/$PROGRAM/installed-files"
-    if [ "$WITH_GUI" != 1 ] && [ -f "$manifest" ] &&
-        grep -q "/$GUI_BINARY" "$manifest" 2>/dev/null; then
-        WITH_GUI=1
-        log "The desktop app was installed before; it will be updated as well"
-    fi
+    VERSION="v$newest"
+    adopt_gui_from_manifest
 }
 
 # --------------------------------------------------------------------------
@@ -738,6 +846,7 @@ update_now() {
 
 main() {
     parse_args "$@"
+    adopt_existing_location
     resolve_dirs
 
     if [ "$DO_UNINSTALL" = 1 ]; then
@@ -752,6 +861,8 @@ main() {
 
     if [ "$DO_UPDATE" = 1 ]; then
         update_now
+    else
+        adopt_existing_install
     fi
 
     TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fast-text-install.XXXXXX")" ||

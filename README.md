@@ -107,6 +107,15 @@ completions, and records every path in `PREFIX/share/fast-text/installed-files`
 so `--uninstall` is exact. When the prefix is not writable the script uses
 `sudo` if it is available.
 
+Running it again over an existing installation **upgrades that copy in place**:
+it reads the recorded version, keeps the desktop app if you had installed it
+before, and installs the newest release — so simply re-running the one-liner
+delivers new features to the editor you already have. When neither `--prefix`
+nor `--bin-dir` is given, an existing `fast-text` on `PATH` decides where the
+upgrade lands, so the copy your shell finds is the one that gets updated. If
+you installed with `cargo install` or a package manager instead, `--check`
+still finds it through `PATH` and tells you the version it sees.
+
 Prebuilt archives are published for **x86_64 and aarch64 Linux** (glibc) and
 **x86_64 and aarch64 macOS**; every other platform builds from source
 automatically. Releases are produced by `.github/workflows/release.yml` when a
@@ -135,6 +144,7 @@ reports that you should rebuild from source.
 The installer can do the same from the shell:
 
 ```sh
+sh install.sh           # notices an existing install and upgrades it
 sh install.sh --check     # "Update available: v0.1.0 … v0.2.0"
 sh install.sh --update    # install the newest release in place
 ```
