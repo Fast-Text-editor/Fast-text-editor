@@ -114,8 +114,8 @@ Environment:
                                        skipping the GitHub query (for tests)
 
 Re-running the installer over an existing installation updates that copy in
-place (keeping the desktop app if it was installed before): `--check` reports
-whether a newer release exists, and `--update` installs it only when there is
+place (keeping the desktop app if it was installed before): --check reports
+whether a newer release exists, and --update installs it only when there is
 one.
 
 Examples:
