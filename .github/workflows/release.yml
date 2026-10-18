@@ -77,7 +77,7 @@ jobs:
       # which needs no extra tooling on a stock Windows box.
       - name: Package (Windows)
         if: runner.os == 'Windows'
-        id: package
+        id: package_windows
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: fast-text-${{ matrix.target }}
-          path: ${{ steps.package.outputs.asset }}
+          path: ${{ steps.package.outputs.asset || steps.package_windows.outputs.asset }}
           if-no-files-found: error
 
   release:
