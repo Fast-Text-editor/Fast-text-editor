@@ -4,10 +4,29 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-18
 
 ### Added
 
+- **Named themes** (core + TUI + GUI): ten palettes ship with the editor —
+  `dark`, `light`, `one-dark`, `monokai`, `dracula`, `nord`, `gruvbox`,
+  `tokyo-night`, `solarized-dark` and `solarized-light`. Pick one from the
+  command palette (*Theme: Monokai*, …), flip between dark and light with
+  `Ctrl+T`, or set it in `config.toml` with `theme = "monokai"`. Themes are
+  selectable from the manager's catalog too, and scripts can define their own
+  with `define_theme(name, colors)` (a map of `0xRRGGBB` colors, missing keys
+  fall back to the dark palette) and switch with `set_theme(name)`. The active
+  theme name and the full buffer are exposed to scripts as the `theme` and
+  `document_text` globals in both Rhai and TextWrite.
+- **Installable first-party plugin catalog** (TUI): the plugin manager gains an
+  **Available** tab listing six plugins written in TextWrite and compiled into
+  the editor — **Theme pack**, **Case and lines**, **Statistics**,
+  **Markdown pro**, **Whitespace** and **Snippets**. Highlight one and press
+  `Enter` to install it for real: the source is written into the user plugin
+  directory and loaded immediately, where it appears under *Installed* like any
+  other plugin and can be edited, disabled or deleted afterwards. No network
+  access is required. The sources live under
+  `crates/fast-text-tui/plugin-catalog/`.
 - **Editing ergonomics** (TUI): auto-closing pairs, auto-indent with block
   expansion, `Ctrl+/` toggle comment, `Ctrl+Shift+D` duplicate line,
   `Ctrl+Shift+K` delete line, `Alt+Up`/`Alt+Down` move line, and a
@@ -44,6 +63,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--prefix`/`-Prefix` is given — and upgrades it in place, keeping the
   desktop app if it was installed before.
 
+### Fixed
+
+- **`words(text)` builtin** (TextWrite): it was documented and listed among the
+  builtins but never implemented, so any script that counted words — including
+  the shipped `text_tools.tw` plugin and the new **Statistics** catalog plugin
+  — failed at runtime with `unknown builtin \`words\``. It now splits text on
+  any run of whitespace and drops empty pieces, like `lines` does for lines.
+
 ## [0.1.0]
 
 The first public release.
@@ -73,5 +100,6 @@ The first public release.
 - **Releases**: GitHub Actions builds `fast-text-<target>.tar.gz` for Linux and
   macOS (x86_64 and aarch64) on every `v*` tag.
 
-[Unreleased]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Fast-Text-editor/Fast-text-editor/releases/tag/v0.1.0

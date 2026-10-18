@@ -404,3 +404,21 @@ fn compile_checks_imports_without_running() {
     let mut tw = Interpreter::new();
     assert!(tw.compile("fn (").is_err());
 }
+
+#[test]
+fn word_and_line_builtins_split_text() {
+    // `words` splits on any run of whitespace and drops the empties.
+    assert_eq!(eval("len(words(\"  the quick   fox \"))").to_display(), "3");
+    assert_eq!(
+        eval("join(words(\"a\\tb\\nc\"), \"-\")").to_display(),
+        "a-b-c"
+    );
+    assert_eq!(eval("len(words(\"   \"))").to_display(), "0");
+    // Builtins are also methods.
+    assert_eq!(
+        eval("\"one two\".words()").to_display(),
+        "[\"one\", \"two\"]"
+    );
+    // `lines` keeps its existing behaviour.
+    assert_eq!(eval("len(lines(\"a\\nb\\n\"))").to_display(), "2");
+}

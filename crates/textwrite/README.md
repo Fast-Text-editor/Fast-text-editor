@@ -331,7 +331,7 @@ let port = get(config, "port") or 8080
 | Types | `len`, `type`, `str`, `int`, `float`, `bool` |
 | Math | `abs`, `min`, `max`, `floor`, `ceil`, `round`, `sqrt`, `pow` |
 | Sequences | `range`, `push`, `pop`, `insert`, `remove`, `first`, `last`, `slice`, `reverse`, `sort`, `sort_by`, `join`, `split`, `contains`, `index_of`, `keys`, `values`, `has`, `get` |
-| Strings | `upper`, `lower`, `trim`, `replace`, `starts_with`, `ends_with`, `chars`, `lines` |
+| Strings | `upper`, `lower`, `trim`, `replace`, `starts_with`, `ends_with`, `chars`, `lines`, `words` |
 | Higher-order | `map`, `filter`, `reduce`, `each`, `any`, `all` |
 | Errors | `assert`, `error`, `exit` |
 | Files (native) | `read_file`, `write_file`, `append_file`, `exists` |

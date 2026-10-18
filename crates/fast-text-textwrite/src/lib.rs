@@ -6,8 +6,9 @@
 //! [`EditorAction`]s that the host applies in order. That keeps the scripting
 //! layer decoupled from the editor internals and from the borrow checker.
 //!
-//! A script makes the editor globals (`selected_text`, `has_selection`,
-//! `file_name`, …) available and calls editor functions to act:
+//! A script makes the editor globals (`selected_text`, `document_text`,
+//! `has_selection`, `file_name`, `theme`, …) available and calls editor
+//! functions to act:
 //!
 //! ```textwrite
 //! fn wrap_in_quotes() {
@@ -22,8 +23,13 @@
 //! bind("ctrl+shift+q", "Wrap in quotes")
 //! ```
 //!
-//! [`ScriptHost`] loads scripts, remembers the commands and keybindings they
-//! register, and runs a named command against a snapshot of the editor state.
+//! Besides editing actions, a script can restyle the editor: `set_theme(name)`
+//! switches to a built-in or plugin-defined theme, and `define_theme(name,
+//! colors)` registers a new palette from a map of `0xRRGGBB` colors.
+//!
+//! [`ScriptHost`] loads scripts, remembers the commands, keybindings and themes
+//! they register, and runs a named command against a snapshot of the editor
+//! state.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -41,6 +47,8 @@ const AUTOMATOR_SRC: &str = include_str!("automator.tw");
 type Queue = Rc<RefCell<Vec<EditorAction>>>;
 type Commands = Rc<RefCell<BTreeMap<String, CommandInfo>>>;
 type Keybinds = Rc<RefCell<Vec<(KeySpec, String)>>>;
+/// Themes a script defined with `define_theme`, as name → `(key, 0xRRGGBB)`.
+type Themes = Rc<RefCell<BTreeMap<String, Vec<(String, u32)>>>>;
 
 /// The native functions a TextWrite editor script may call.
 static HOST_FUNCTIONS: &[&str] = &[
@@ -63,6 +71,8 @@ static HOST_FUNCTIONS: &[&str] = &[
     "save",
     "set_language",
     "set_cursor_style",
+    "set_theme",
+    "define_theme",
     "wait",
     "command",
     "command_with_desc",
@@ -75,6 +85,7 @@ struct EditorHost {
     queue: Queue,
     commands: Commands,
     keybindings: Keybinds,
+    themes: Themes,
 }
 
 impl Host for EditorHost {
@@ -162,6 +173,50 @@ impl Host for EditorHost {
                     ))),
                 }
             }
+            "set_theme" => {
+                let theme = arg_str(&args, 0, name, span)?;
+                self.push(EditorAction::SetTheme(theme));
+            }
+            "define_theme" => {
+                let theme = arg_str(&args, 0, name, span)?;
+                let colors = match args.get(1) {
+                    Some(Value::Map(map)) => {
+                        let entries = map.borrow();
+                        let mut colors = Vec::with_capacity(entries.len());
+                        for (key, value) in entries.iter() {
+                            match value.as_i64() {
+                                Some(n) => colors.push((key.to_string(), (n as u32) & 0xFF_FF_FF)),
+                                None => {
+                                    return Err(textwrite::Error::runtime(
+                                        format!(
+                                            "`define_theme` colors must be ints like 0xRRGGBB; `{key}` is {}",
+                                            value.type_name()
+                                        ),
+                                        span,
+                                    ))
+                                }
+                            }
+                        }
+                        colors
+                    }
+                    Some(other) => {
+                        return Err(textwrite::Error::runtime(
+                            format!(
+                                "`define_theme` expects a color map for argument 2, found {}",
+                                other.type_name()
+                            ),
+                            span,
+                        ))
+                    }
+                    None => {
+                        return Err(textwrite::Error::runtime(
+                            "`define_theme` expects 2 argument(s)".to_string(),
+                            span,
+                        ))
+                    }
+                };
+                self.themes.borrow_mut().insert(theme, colors);
+            }
             "wait" => {
                 let ms = arg_usize(&args, 0, name, span)?;
                 self.push(EditorAction::Wait(ms as u64));
@@ -223,6 +278,7 @@ pub struct ScriptHost {
     queue: Queue,
     commands: Commands,
     keybindings: Keybinds,
+    themes: Themes,
     sources: Vec<(String, String)>,
     /// Directory that relative `import "./file.tw"` paths resolve against.
     base_dir: Option<PathBuf>,
@@ -243,13 +299,15 @@ impl ScriptHost {
         let commands: Commands =
             std::rc::Rc::new(std::cell::RefCell::new(std::collections::BTreeMap::new()));
         let keybindings: Keybinds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let themes: Themes = std::rc::Rc::new(std::cell::RefCell::new(BTreeMap::new()));
 
-        let interp = make_interpreter(&queue, &commands, &keybindings);
+        let interp = make_interpreter(&queue, &commands, &keybindings, &themes);
         Self {
             interp,
             queue,
             commands,
             keybindings,
+            themes,
             sources: Vec::new(),
             base_dir: None,
             errors: Vec::new(),
@@ -302,11 +360,13 @@ impl ScriptHost {
         self.errors.clear();
         self.commands.borrow_mut().clear();
         self.keybindings.borrow_mut().clear();
+        self.themes.borrow_mut().clear();
         self.queue.borrow_mut().clear();
         // Start from a clean interpreter so removed scripts leave no functions
         // behind, then give top-level code a default snapshot so it can
         // reference editor globals while registering commands.
-        self.interp = make_interpreter(&self.queue, &self.commands, &self.keybindings);
+        self.interp =
+            make_interpreter(&self.queue, &self.commands, &self.keybindings, &self.themes);
         if let Some(dir) = self.base_dir.clone() {
             self.interp.set_module_base(dir);
         }
@@ -366,6 +426,12 @@ impl ScriptHost {
             "language",
             Value::str(ctx.language.clone()),
         );
+        set(&mut self.interp, "theme", Value::str(ctx.theme.clone()));
+        set(
+            &mut self.interp,
+            "document_text",
+            Value::str(ctx.doc_text.clone()),
+        );
     }
 
     /// Every registered command, sorted by title.
@@ -381,6 +447,20 @@ impl ScriptHost {
     /// All registered keybindings.
     pub fn keybindings(&self) -> Vec<(KeySpec, String)> {
         self.keybindings.borrow().clone()
+    }
+
+    /// Every theme defined by a loaded script, as `(name, colors)`.
+    pub fn themes(&self) -> Vec<(String, Vec<(String, u32)>)> {
+        self.themes
+            .borrow()
+            .iter()
+            .map(|(name, colors)| (name.clone(), colors.clone()))
+            .collect()
+    }
+
+    /// The names of every theme defined by a loaded script.
+    pub fn theme_names(&self) -> Vec<String> {
+        self.themes.borrow().keys().cloned().collect()
     }
 
     /// Finds the command title bound to a key, if any.
@@ -471,11 +551,17 @@ fn read_script(path: &str) -> textwrite::Result<(String, PathBuf)> {
 }
 
 /// Builds a fresh interpreter wired to the shared editor host.
-fn make_interpreter(queue: &Queue, commands: &Commands, keybindings: &Keybinds) -> Interpreter {
+fn make_interpreter(
+    queue: &Queue,
+    commands: &Commands,
+    keybindings: &Keybinds,
+    themes: &Themes,
+) -> Interpreter {
     let host = EditorHost {
         queue: queue.clone(),
         commands: commands.clone(),
         keybindings: keybindings.clone(),
+        themes: themes.clone(),
     };
     let mut interp = Interpreter::with_output(Box::new(std::io::sink()));
     interp.set_host(Rc::new(RefCell::new(host)));

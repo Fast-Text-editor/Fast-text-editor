@@ -1,0 +1,47 @@
+# Snippet inserters for Fast Text — a TextWrite plugin.
+#
+# Small helpers for starting a section, drawing a divider, or dropping in a
+# note. Strings show off interpolation and the `repeat` loop.
+
+fn sn_rule() {
+    let rule = ""
+    repeat 68 times {
+        rule += "-"
+    }
+    return rule
+}
+
+fn sn_banner() {
+    let label = "Section"
+    if has_selection {
+        label = trim(selected_text)
+    }
+    let rule = sn_rule()
+    insert("{rule}\n{label}\n{rule}\n")
+}
+command_with_desc("Snippets: section banner", "Insert a titled banner on its own lines", "sn_banner")
+
+fn sn_divider() {
+    insert("\n{sn_rule()}\n")
+}
+command_with_desc("Snippets: divider", "Insert a horizontal divider line", "sn_divider")
+
+fn sn_note() {
+    let rule = ""
+    repeat 20 times {
+        rule += "="
+    }
+    insert("NOTE\n{rule}\n\n")
+}
+command_with_desc("Snippets: note block", "Insert an empty note block", "sn_note")
+
+fn sn_todo() {
+    insert("TODO: ")
+}
+command_with_desc("Snippets: TODO", "Insert a TODO marker at the caret", "sn_todo")
+
+fn sn_checkbox() {
+    move_caret("line_start", false)
+    insert("- [ ] ")
+}
+command_with_desc("Snippets: checkbox", "Start the line with an unchecked box", "sn_checkbox")

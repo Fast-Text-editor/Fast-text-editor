@@ -13,6 +13,7 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 use crate::config::Config;
 use crate::find_in_files;
@@ -20,7 +21,7 @@ use crate::lsp::LspManager;
 use crate::picker::{Picker, PickerItem, PickerOutcome};
 use crate::plugin_manager::{ManagerAction, PluginManager};
 use crate::sidebar::{Sidebar, SidebarAction};
-use crate::theme::Theme;
+use crate::theme::{normalize_name, Theme};
 
 /// A single open buffer plus its view state (scroll, highlight cache).
 pub struct Editor {
@@ -418,6 +419,8 @@ pub struct App {
     pub message: Option<String>,
     pub is_error: bool,
     pub theme: Theme,
+    /// The name of the active theme, e.g. `dark` or `monokai`.
+    pub theme_name: String,
     pub dark_theme: bool,
     pub show_help: bool,
     pub clipboard: String,
@@ -530,6 +533,7 @@ impl App {
             message: None,
             is_error: false,
             theme: Theme::dark(),
+            theme_name: "dark".to_string(),
             dark_theme: true,
             show_help: false,
             clipboard: String::new(),
@@ -571,23 +575,31 @@ impl App {
 
     /// Applies a loaded config, returning the warnings it produced.
     fn apply_config(&mut self, config: Config) -> Vec<String> {
+        let key_map = config.key_map();
+        let mut warnings = config.warnings;
+        let theme = config.theme.clone();
         self.cursor_style = config.cursor_style;
-        self.dark_theme = !config.light_theme;
-        self.theme = if config.light_theme {
-            Theme::light()
-        } else {
-            Theme::dark()
-        };
+        // Plugin-defined themes are known by now (the hosts were built first),
+        // so an unknown name is a real mistake worth reporting.
+        if !self.apply_theme_name(&theme) {
+            warnings.push(format!(
+                "unknown theme `{}`; using dark (known: {})",
+                theme,
+                Theme::names().join(", ")
+            ));
+            self.apply_theme_name("dark");
+        }
+        self.message = None;
         if config.sidebar {
             self.sidebar.show();
         } else {
             self.sidebar.hide();
         }
         self.sidebar.set_show_hidden(config.show_hidden);
-        self.keybindings = config.key_map();
+        self.keybindings = key_map;
         self.config_path = config.path.clone();
         self.update_checks_enabled = config.check_updates && env_update_checks_enabled();
-        config.warnings
+        warnings
     }
 
     pub fn editor(&self) -> &Editor {
@@ -617,6 +629,8 @@ impl App {
             line_count: ed.doc.buffer().len_lines(),
             file_name: ed.title(),
             language: ed.language.name().to_string(),
+            theme: self.theme_name.clone(),
+            doc_text: ed.doc.text(),
         }
     }
 
@@ -715,6 +729,11 @@ impl App {
             EditorAction::SetCursorStyle(style) => {
                 self.cursor_style = style;
                 self.set_message(format!("Cursor style: {}", style.name()));
+            }
+            EditorAction::SetTheme(name) => {
+                if !self.apply_theme_name(&name) {
+                    self.set_error(format!("Unknown theme: {name}"));
+                }
             }
             // Consumed by `schedule`; a stray one is a no-op.
             EditorAction::Wait(_) => {}
@@ -853,7 +872,15 @@ impl App {
                 self.begin_update_check(true);
                 true
             }
-            _ => false,
+            _ => {
+                if let Some(name) = title.strip_prefix("Theme: ") {
+                    if !self.apply_theme_name(name) {
+                        self.set_error(format!("Unknown theme: {name}"));
+                    }
+                    return true;
+                }
+                false
+            }
         }
     }
 
@@ -987,6 +1014,9 @@ impl App {
             }
             "check_updates" | "check_for_updates" | "update_check" => self.begin_update_check(true),
             _ => {
+                if let Some(name) = id.strip_prefix("theme_") {
+                    return self.apply_theme_name(&name.replace('_', "-"));
+                }
                 if let Some(name) = id.strip_prefix("macro_") {
                     self.run_named_macro(name);
                 } else {
@@ -1316,6 +1346,7 @@ impl App {
     /// Every registered command title: built-ins, Rhai plugins, TextWrite scripts.
     pub fn command_titles(&self) -> Vec<String> {
         let mut titles: Vec<String> = BUILTIN_COMMANDS.iter().map(|s| s.to_string()).collect();
+        titles.extend(self.theme_titles());
         titles.extend(self.plugins.command_titles());
         titles.extend(self.scripts.command_titles());
         titles.extend(self.macro_command_titles());
@@ -1918,13 +1949,57 @@ impl App {
         self.is_error = true;
     }
 
+    /// Switches between the dark and light palettes.
     pub fn toggle_theme(&mut self) {
-        self.dark_theme = !self.dark_theme;
-        self.theme = if self.dark_theme {
-            Theme::dark()
-        } else {
-            Theme::light()
-        };
+        let next = if self.dark_theme { "light" } else { "dark" };
+        self.apply_theme_name(next);
+    }
+
+    /// Resolves a theme name to a theme, its canonical name, and whether it is
+    /// dark. Built-in themes win; then any theme a plugin defined.
+    pub fn resolve_theme(&self, name: &str) -> Option<(Theme, String, bool)> {
+        let trimmed = name.trim();
+        if let Some(theme) = Theme::by_name(trimmed) {
+            let canonical = Theme::canonical_name(trimmed).unwrap_or("dark").to_string();
+            let dark = Theme::is_dark(&canonical);
+            return Some((theme, canonical, dark));
+        }
+        let wanted = normalize_name(trimmed);
+        for (candidate, colors) in self.scripts.themes() {
+            if normalize_name(&candidate) == wanted {
+                let (theme, _) = Theme::from_colors(&colors);
+                let dark = is_dark_color(theme.background);
+                return Some((theme, candidate, dark));
+            }
+        }
+        None
+    }
+
+    /// Applies a theme by name, reporting it in the status bar. Returns false
+    /// (leaving the current theme alone) when the name is unknown.
+    pub fn apply_theme_name(&mut self, name: &str) -> bool {
+        match self.resolve_theme(name) {
+            Some((theme, canonical, dark)) => {
+                self.theme = theme;
+                self.theme_name = canonical.clone();
+                self.dark_theme = dark;
+                self.set_message(format!("Theme: {canonical}"));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Every switchable theme title, built-ins first, then plugin themes.
+    pub fn theme_titles(&self) -> Vec<String> {
+        let mut titles: Vec<String> = Theme::names()
+            .iter()
+            .map(|name| format!("Theme: {}", theme_display_name(name)))
+            .collect();
+        for name in self.scripts.theme_names() {
+            titles.push(format!("Theme: {name}"));
+        }
+        titles
     }
 
     // --- Buffer management -------------------------------------------------
@@ -2100,8 +2175,12 @@ impl App {
         let (plugins, scripts) = self.plugin_manager.build_hosts();
         self.plugins = plugins;
         self.scripts = scripts;
+        if let Some(notice) = self.plugin_manager.take_notice() {
+            self.set_message(notice);
+            return;
+        }
         let on = self.plugin_manager.enabled_count();
-        let total = self.plugin_manager.entries.len();
+        let total = self.plugin_manager.installed().len();
         self.set_message(format!("Plugins: {on}/{total} enabled"));
     }
 
@@ -2218,10 +2297,12 @@ impl App {
         // The plugin manager is modal: it takes every click while open.
         if self.plugin_manager.is_open() {
             if let Some(index) = self.plugin_manager.row_at(column, row) {
-                if self.plugin_manager.selected == index {
-                    // A second click on the same row toggles it.
-                    self.plugin_manager.toggle(index);
-                    self.reload_plugins();
+                if self.plugin_manager.list_selected() == index {
+                    // A second click on the same row activates it: toggles an
+                    // installed plugin, installs a catalog one.
+                    if self.plugin_manager.activate(index) {
+                        self.reload_plugins();
+                    }
                 } else {
                     self.plugin_manager.select(index);
                 }
@@ -3250,6 +3331,31 @@ fn is_macro_toggle(key: &KeyEvent) -> bool {
 
 /// The plugin directories, in load order: the user config first, then the
 /// `plugins/` folder next to the working directory.
+/// Whether a color reads as dark, from its perceived luminance.
+fn is_dark_color(color: Color) -> bool {
+    let (r, g, b) = match color {
+        Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
+        Color::Black => (0.0, 0.0, 0.0),
+        Color::White | Color::Gray => (255.0, 255.0, 255.0),
+        _ => return true,
+    };
+    (0.299 * r + 0.587 * g + 0.114 * b) < 128.0
+}
+
+/// `monokai` → `Monokai`, `solarized-dark` → `Solarized Dark`.
+fn theme_display_name(name: &str) -> String {
+    name.split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn plugin_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(dir) = user_plugin_dir() {
@@ -4058,6 +4164,77 @@ mod tests {
         assert!(app.scripts.has_command("B"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn catalog_plugin_can_be_installed_from_the_manager() {
+        let dir = std::env::temp_dir().join(format!("ft-tui-catalog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut app = empty_app();
+        app.plugin_manager =
+            crate::plugin_manager::PluginManager::discover(vec![dir.clone()], None);
+        app.reload_plugins();
+        assert!(!app.scripts.has_command("Theme: Monokai"));
+
+        // Tab to the catalog, then Enter installs the highlighted plugin.
+        app.plugin_manager.open();
+        app.handle_key(key(KeyCode::Tab));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(dir.join("themes.tw").exists(), "installed onto disk");
+        assert!(
+            app.scripts.has_command("Theme: Monokai"),
+            "the installed theme plugin is live"
+        );
+        assert_eq!(app.plugin_manager.enabled_count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn theme_commands_switch_the_palette() {
+        let mut app = empty_app();
+        assert_eq!(app.theme_name, "dark");
+
+        assert!(app.run_command("Theme: Monokai"));
+        assert_eq!(app.theme_name, "monokai");
+        assert!(app.dark_theme);
+
+        assert!(app.run_command("Theme: Light"));
+        assert_eq!(app.theme_name, "light");
+        assert!(!app.dark_theme);
+
+        // `toggle_theme` flips back to the dark palette.
+        app.toggle_theme();
+        assert_eq!(app.theme_name, "dark");
+
+        // Config ids work too.
+        assert!(app.run_command("theme_nord"));
+        assert_eq!(app.theme_name, "nord");
+    }
+
+    #[test]
+    fn plugin_defined_themes_are_usable() {
+        let mut app = empty_app();
+        let mut scripts = ScriptHost::new();
+        scripts.add_script(
+            "themes.tw",
+            "define_theme(\"Midnight\", { background: 0x0B0E14, keyword: 0xBB9AF7 })\n\
+             fn midnight() { set_theme(\"Midnight\") }\n\
+             command_with_desc(\"Theme: Midnight\", \"midnight\", \"midnight\")\n",
+        );
+        assert!(scripts.errors.is_empty(), "{:?}", scripts.errors);
+        app.scripts = scripts;
+        // Re-apply the config-supplied theme against the new script set.
+        app.apply_theme_name("dark");
+
+        assert!(app.run_command("Theme: Midnight"));
+        assert_eq!(app.theme_name, "Midnight");
+        assert!(app.dark_theme, "the custom background is dark");
+
+        // The action path reaches the same theme.
+        app.apply_actions(vec![EditorAction::SetTheme("Midnight".to_string())]);
+        assert_eq!(app.theme_name, "Midnight");
     }
 
     // --- Tabs and mouse ----------------------------------------------------

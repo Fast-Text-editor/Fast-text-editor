@@ -5,6 +5,11 @@
 //! what each one registers (commands, keybindings, and any load error), and
 //! remembers which ones are switched off.
 //!
+//! The overlay has two lists. **Installed** shows the plugins found on disk;
+//! **Available** shows the first-party catalog (see [`crate::catalog`]) —
+//! TextWrite plugins compiled into the editor that can be installed into the
+//! user's plugin folder with one key press.
+//!
 //! Discovery loads every plugin in isolation so the manager can show per-file
 //! details even though the running editor merges them into a single
 //! command/keybinding table. Turning a plugin on or off rewrites a small
@@ -19,6 +24,8 @@ use fast_text_plugin::{CommandInfo, KeySpec, PluginHost};
 use fast_text_textwrite::ScriptHost;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
+
+use crate::catalog::{CatalogPlugin, CATALOG};
 
 /// Assumed list height until the first draw reports the real one.
 const DEFAULT_VIEW_HEIGHT: usize = 20;
@@ -78,12 +85,39 @@ pub struct PluginEntry {
 pub enum ManagerAction {
     /// Nothing changed.
     None,
-    /// A plugin was toggled; the app should rebuild its hosts.
+    /// A plugin was toggled or installed; the app should rebuild its hosts.
     Reload,
-    /// The user asked to install a plugin.
+    /// The user asked to install a plugin from a path.
     Install,
     /// The user asked to close the manager.
     Close,
+}
+
+/// Which of the two lists the overlay is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagerTab {
+    /// Plugins found on disk.
+    Installed,
+    /// Catalog plugins that are not installed yet.
+    Available,
+}
+
+impl ManagerTab {
+    /// Title for the tab strip.
+    pub fn title(self) -> &'static str {
+        match self {
+            ManagerTab::Installed => "Installed",
+            ManagerTab::Available => "Available",
+        }
+    }
+
+    /// The other tab.
+    fn other(self) -> ManagerTab {
+        match self {
+            ManagerTab::Installed => ManagerTab::Available,
+            ManagerTab::Available => ManagerTab::Installed,
+        }
+    }
 }
 
 /// Discovers plugins and tracks which ones are enabled.
@@ -104,6 +138,18 @@ pub struct PluginManager {
     disabled: BTreeSet<String>,
     /// Where the disabled set is persisted, if anywhere.
     config_path: Option<PathBuf>,
+    /// Which list the overlay shows.
+    tab: ManagerTab,
+    /// Catalog plugins that are not installed yet.
+    available: Vec<&'static CatalogPlugin>,
+    /// Selection within the Available list.
+    avail_selected: usize,
+    /// Scroll within the Available list.
+    avail_scroll: usize,
+    /// The last error from an install, shown in the details pane.
+    install_error: Option<String>,
+    /// A one-shot message about the last install, for the app to show.
+    notice: Option<String>,
 }
 
 impl PluginManager {
@@ -125,6 +171,12 @@ impl PluginManager {
             dirs,
             disabled,
             config_path,
+            tab: ManagerTab::Installed,
+            available: Vec::new(),
+            avail_selected: 0,
+            avail_scroll: 0,
+            install_error: None,
+            notice: None,
         };
         manager.rescan();
         manager
@@ -199,7 +251,124 @@ impl PluginManager {
         self.selected = selected_name
             .and_then(|name| self.entries.iter().position(|e| e.name == name))
             .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
+        // Catalog plugins whose file is not on disk yet can be installed.
+        self.available = CATALOG
+            .iter()
+            .filter(|plugin| !seen.contains(plugin.file_name))
+            .collect();
+        self.avail_selected = self
+            .avail_selected
+            .min(self.available.len().saturating_sub(1));
         self.clamp_scroll();
+    }
+
+    // --- Catalog -----------------------------------------------------------
+
+    /// Which list the overlay is showing.
+    pub fn tab(&self) -> ManagerTab {
+        self.tab
+    }
+
+    /// Switches between the Installed and Available lists.
+    pub fn switch_tab(&mut self) {
+        self.tab = self.tab.other();
+        self.pending_delete = None;
+        self.install_error = None;
+        self.clamp_scroll();
+    }
+
+    /// The catalog plugins that are not installed yet.
+    pub fn available(&self) -> &[&'static CatalogPlugin] {
+        &self.available
+    }
+
+    /// The installed plugins.
+    pub fn installed(&self) -> &[PluginEntry] {
+        &self.entries
+    }
+
+    /// The number of rows in the active list.
+    pub fn list_len(&self) -> usize {
+        match self.tab {
+            ManagerTab::Installed => self.entries.len(),
+            ManagerTab::Available => self.available.len(),
+        }
+    }
+
+    /// The selection within the active list.
+    pub fn list_selected(&self) -> usize {
+        match self.tab {
+            ManagerTab::Installed => self.selected,
+            ManagerTab::Available => self.avail_selected,
+        }
+    }
+
+    /// The scroll offset of the active list.
+    pub fn list_scroll(&self) -> usize {
+        match self.tab {
+            ManagerTab::Installed => self.scroll,
+            ManagerTab::Available => self.avail_scroll,
+        }
+    }
+
+    /// The catalog plugin under the selection, when the Available tab is shown.
+    pub fn selected_catalog(&self) -> Option<&'static CatalogPlugin> {
+        self.available.get(self.avail_selected).copied()
+    }
+
+    /// The last install error, if one is being shown.
+    pub fn install_error(&self) -> Option<&str> {
+        self.install_error.as_deref()
+    }
+
+    /// Takes the pending install notice, if one is waiting.
+    pub fn take_notice(&mut self) -> Option<String> {
+        self.notice.take()
+    }
+
+    /// Installs a catalog plugin into the primary plugin directory.
+    ///
+    /// Returns the file name that was written.
+    pub fn install_plugin(&mut self, plugin: &CatalogPlugin) -> Result<String, String> {
+        let dir = self
+            .primary_dir()
+            .ok_or_else(|| "no plugin directory configured".to_string())?
+            .to_path_buf();
+        fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let dest = dir.join(plugin.file_name);
+        fs::write(&dest, plugin.source)
+            .map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
+        // A leftover "off" entry would hide the freshly installed plugin.
+        if self.disabled.remove(plugin.file_name) {
+            if let Some(state) = self.config_path.clone() {
+                write_disabled(&state, &self.disabled);
+            }
+        }
+        self.install_error = None;
+        self.notice = Some(format!(
+            "Installed {} — {}",
+            plugin.title, plugin.description
+        ));
+        self.rescan();
+        Ok(plugin.file_name.to_string())
+    }
+
+    /// Installs the catalog plugin at `index` in the Available list.
+    pub fn install(&mut self, index: usize) -> Result<String, String> {
+        let Some(plugin) = self.available.get(index).copied() else {
+            return Err("no such plugin".to_string());
+        };
+        let result = self.install_plugin(plugin);
+        if let Err(error) = &result {
+            self.install_error = Some(error.clone());
+        }
+        result
+    }
+
+    /// Installs the selected catalog plugin.
+    fn install_selected(&mut self) -> bool {
+        let index = self.avail_selected;
+        self.install(index).is_ok()
     }
 
     /// Turns the plugin at `index` on or off, persisting the change.
@@ -234,7 +403,7 @@ impl PluginManager {
 
     /// Asks for confirmation before deleting the selected plugin.
     fn request_delete(&mut self) {
-        if !self.entries.is_empty() {
+        if self.tab == ManagerTab::Installed && !self.entries.is_empty() {
             self.pending_delete = Some(self.selected);
         }
     }
@@ -279,35 +448,65 @@ impl PluginManager {
 
     // --- Navigation --------------------------------------------------------
 
-    /// Selects an entry, clamping to the list and keeping it on screen.
+    /// Selects a row of the active list, clamping to it and keeping it on screen.
     pub fn select(&mut self, index: usize) {
-        if self.entries.is_empty() {
-            self.selected = 0;
-        } else {
-            self.selected = index.min(self.entries.len() - 1);
+        let len = self.list_len();
+        let clamped = if len == 0 { 0 } else { index.min(len - 1) };
+        match self.tab {
+            ManagerTab::Installed => self.selected = clamped,
+            ManagerTab::Available => self.avail_selected = clamped,
         }
         self.clamp_scroll();
     }
 
-    /// Moves the selection by `delta` rows.
+    /// Moves the selection of the active list by `delta` rows.
     pub fn move_selection(&mut self, delta: isize) {
-        if self.entries.is_empty() {
+        let len = self.list_len();
+        if len == 0 {
             return;
         }
-        let next = self.selected as isize + delta;
-        self.selected = next.clamp(0, self.entries.len() as isize - 1) as usize;
+        let selected = self.list_selected() as isize + delta;
+        let clamped = selected.clamp(0, len as isize - 1) as usize;
+        match self.tab {
+            ManagerTab::Installed => self.selected = clamped,
+            ManagerTab::Available => self.avail_selected = clamped,
+        }
         self.clamp_scroll();
     }
 
     fn clamp_scroll(&mut self) {
         let height = self.view_height.max(1);
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + height {
-            self.scroll = self.selected + 1 - height;
+        let (selected, scroll) = match self.tab {
+            ManagerTab::Installed => (&mut self.selected, &mut self.scroll),
+            ManagerTab::Available => (&mut self.avail_selected, &mut self.avail_scroll),
+        };
+        let len = match self.tab {
+            ManagerTab::Installed => self.entries.len(),
+            ManagerTab::Available => self.available.len(),
+        };
+        if *selected < *scroll {
+            *scroll = *selected;
+        } else if *selected >= *scroll + height {
+            *scroll = *selected + 1 - height;
         }
-        let max = self.entries.len().saturating_sub(height);
-        self.scroll = self.scroll.min(max);
+        let max = len.saturating_sub(height);
+        *scroll = (*scroll).min(max);
+    }
+
+    /// Toggles or installs the selected row of the active list. Returns true
+    /// when the hosts should be rebuilt.
+    fn activate_selected(&mut self) -> bool {
+        match self.tab {
+            ManagerTab::Installed => self.toggle_selected(),
+            ManagerTab::Available => self.install_selected(),
+        }
+    }
+
+    /// Toggles or installs the row at `index` of the active list. Returns true
+    /// when the hosts should be rebuilt.
+    pub fn activate(&mut self, index: usize) -> bool {
+        self.select(index);
+        self.activate_selected()
     }
 
     /// Handles one key press while the overlay is open.
@@ -321,18 +520,30 @@ impl PluginManager {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => return ManagerAction::Close,
+            KeyCode::Tab => self.switch_tab(),
+            KeyCode::BackTab => self.switch_tab(),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
             KeyCode::PageUp => self.move_selection(-(self.view_height as isize)),
             KeyCode::PageDown => self.move_selection(self.view_height as isize),
             KeyCode::Home => self.select(0),
-            KeyCode::End => self.select(self.entries.len().saturating_sub(1)),
+            KeyCode::End => self.select(self.list_len().saturating_sub(1)),
             KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Char('x') => {
-                if self.toggle_selected() {
+                if self.activate_selected() {
                     return ManagerAction::Reload;
                 }
             }
-            KeyCode::Char('i') => return ManagerAction::Install,
+            KeyCode::Char('i') => {
+                // On the Available tab `i` installs the highlighted plugin;
+                // elsewhere it opens the "install from a path" prompt.
+                if self.tab == ManagerTab::Available {
+                    if self.install_selected() {
+                        return ManagerAction::Reload;
+                    }
+                } else {
+                    return ManagerAction::Install;
+                }
+            }
             KeyCode::Char('d') | KeyCode::Delete => self.request_delete(),
             KeyCode::Char('r') => self.rescan(),
             _ => {}
@@ -359,20 +570,28 @@ impl PluginManager {
         rect_contains(self.outer_area, column, row)
     }
 
-    /// The index of the tree row drawn at a screen cell, if any.
+    /// The index of the list row drawn at a screen cell, if any.
     pub fn row_at(&self, column: u16, row: u16) -> Option<usize> {
         if !rect_contains(self.list_area, column, row) {
             return None;
         }
-        let index = self.scroll + (row - self.list_area.y) as usize;
-        (index < self.entries.len()).then_some(index)
+        let index = self.list_scroll() + (row - self.list_area.y) as usize;
+        (index < self.list_len()).then_some(index)
     }
 
-    /// Moves the list by `delta` rows without moving the selection.
+    /// Moves the active list by `delta` rows without moving the selection.
     pub fn scroll_by(&mut self, delta: isize) {
         let height = self.view_height.max(1);
-        let max = self.entries.len().saturating_sub(height) as isize;
-        self.scroll = (self.scroll as isize + delta).clamp(0, max) as usize;
+        let len = self.list_len();
+        let max = len.saturating_sub(height) as isize;
+        match self.tab {
+            ManagerTab::Installed => {
+                self.scroll = (self.scroll as isize + delta).clamp(0, max) as usize
+            }
+            ManagerTab::Available => {
+                self.avail_scroll = (self.avail_scroll as isize + delta).clamp(0, max) as usize
+            }
+        }
     }
 }
 
@@ -587,6 +806,96 @@ mod tests {
         write(dir.path(), "broken.tw", "fn oops( { this is not valid\n");
         let manager = PluginManager::discover(vec![dir.path().to_path_buf()], None);
         assert!(manager.entries[0].error.is_some());
+    }
+
+    #[test]
+    fn catalog_starts_fully_available() {
+        let dir = TempDir::new();
+        let manager = PluginManager::discover(vec![dir.path().to_path_buf()], None);
+        assert!(manager.entries.is_empty());
+        assert_eq!(manager.available().len(), CATALOG.len());
+        assert_eq!(manager.tab(), ManagerTab::Installed);
+    }
+
+    #[test]
+    fn installing_writes_the_file_and_removes_it_from_the_catalog() {
+        let dir = TempDir::new();
+        let mut manager = PluginManager::discover(vec![dir.path().to_path_buf()], None);
+
+        // themes.tw is first in the catalog.
+        let written = manager.install(0).unwrap();
+        assert_eq!(written, "themes.tw");
+        let path = dir.path().join("themes.tw");
+        assert!(path.is_file(), "the plugin was written to disk");
+
+        // It is now installed and no longer offered.
+        assert!(manager.entries.iter().any(|e| e.name == "themes.tw"));
+        assert!(!manager
+            .available()
+            .iter()
+            .any(|p| p.file_name == "themes.tw"));
+        assert_eq!(manager.available().len(), CATALOG.len() - 1);
+
+        // And its commands load through the real host.
+        let (_, scripts) = manager.build_hosts();
+        assert!(scripts.has_command("Theme: Monokai"));
+        assert!(scripts.errors.is_empty(), "{:?}", scripts.errors);
+    }
+
+    #[test]
+    fn tab_switches_lists_and_enter_installs() {
+        let dir = TempDir::new();
+        let mut manager = PluginManager::discover(vec![dir.path().to_path_buf()], None);
+        let action = manager.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(action, ManagerAction::None);
+        assert_eq!(manager.tab(), ManagerTab::Available);
+
+        // Enter installs the highlighted catalog plugin.
+        let action = manager.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(action, ManagerAction::Reload);
+        assert_eq!(manager.entries.len(), 1);
+        let notice = manager.take_notice().unwrap();
+        assert!(notice.starts_with("Installed "), "{notice}");
+        assert!(manager.take_notice().is_none(), "notice is one-shot");
+    }
+
+    #[test]
+    fn deleting_is_disabled_on_the_available_tab() {
+        let dir = TempDir::new();
+        write(dir.path(), "cursor.tw", CURSOR_TW);
+        let mut manager = PluginManager::discover(vec![dir.path().to_path_buf()], None);
+        manager.switch_tab();
+        assert_eq!(manager.tab(), ManagerTab::Available);
+        // `d` must not delete an installed plugin from the other tab.
+        assert_eq!(
+            manager.handle_key(KeyEvent::from(KeyCode::Char('d'))),
+            ManagerAction::None
+        );
+        assert!(manager.entries[0].path.is_file());
+
+        // On the Installed tab it asks for confirmation first.
+        manager.switch_tab();
+        assert_eq!(manager.tab(), ManagerTab::Installed);
+        assert_eq!(
+            manager.handle_key(KeyEvent::from(KeyCode::Char('d'))),
+            ManagerAction::None
+        );
+        assert!(manager.pending_delete_name().is_some());
+        let action = manager.handle_key(KeyEvent::from(KeyCode::Char('y')));
+        assert_eq!(action, ManagerAction::Reload);
+        assert!(manager.entries.is_empty());
+    }
+
+    #[test]
+    fn install_error_is_reported_for_an_unwritable_target() {
+        let dir = TempDir::new();
+        // A plugin directory that is really a file cannot be written into.
+        let file = dir.path().join("not-a-dir");
+        fs::write(&file, "x").unwrap();
+        let mut manager = PluginManager::discover(vec![file], None);
+        let err = manager.install(0).unwrap_err();
+        assert!(err.contains("cannot create"), "{err}");
+        assert!(manager.install_error().is_some());
     }
 
     #[test]

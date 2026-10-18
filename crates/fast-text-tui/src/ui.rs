@@ -9,6 +9,7 @@ use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, Prompt, TabHit};
+use crate::plugin_manager::ManagerTab;
 
 const TAB_WIDTH: usize = 4;
 
@@ -1114,30 +1115,38 @@ fn draw_plugin_manager(app: &mut App, frame: &mut Frame, area: Rect) {
     let popup = centered_rect(92, 84, area);
     frame.render_widget(Clear, popup);
 
-    let total = app.plugin_manager.entries.len();
+    let total = app.plugin_manager.installed().len();
     let enabled = app.plugin_manager.enabled_count();
+    let available = app.plugin_manager.available().len();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.tab_active))
         .style(Style::default().bg(app.theme.status_bg))
         .title(Span::styled(
-            format!(" Manage Plugins — {enabled}/{total} enabled "),
+            format!(" Manage Plugins — {enabled}/{total} enabled · {available} to install "),
             Style::default()
                 .fg(app.theme.status_accent)
                 .add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
-    if inner.width == 0 || inner.height < 2 {
+    if inner.width == 0 || inner.height < 4 {
         return;
     }
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
-    let body = rows[0];
-    let footer = rows[1];
+    let tabs = rows[0];
+    let body = rows[1];
+    let footer = rows[2];
+
+    draw_plugin_tabs(app, frame, tabs);
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -1153,17 +1162,26 @@ fn draw_plugin_manager(app: &mut App, frame: &mut Frame, area: Rect) {
     draw_plugin_list(app, frame, list_area);
     draw_plugin_details(app, frame, detail_area);
 
+    let hint_style = Style::default()
+        .fg(app.theme.gutter)
+        .bg(app.theme.status_bg);
     let (hint, hint_style) = match app.plugin_manager.pending_delete_name() {
         Some(name) => (
             format!(" Delete {name}?  y = yes, any other key = cancel "),
             Style::default().fg(app.theme.error).bg(app.theme.status_bg),
         ),
-        None => (
-            " Space/Enter toggles · i installs · d deletes · r rescans · Esc closes ".to_string(),
-            Style::default()
-                .fg(app.theme.gutter)
-                .bg(app.theme.status_bg),
-        ),
+        None => match app.plugin_manager.tab() {
+            ManagerTab::Installed => (
+                " Tab: catalog · Space/Enter toggles · i installs from a path · d deletes · r rescans · Esc closes "
+                    .to_string(),
+                hint_style,
+            ),
+            ManagerTab::Available => (
+                " Tab: installed · Space/Enter installs the highlighted plugin · r rescans · Esc closes "
+                    .to_string(),
+                hint_style,
+            ),
+        },
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hint, hint_style))),
@@ -1171,34 +1189,89 @@ fn draw_plugin_manager(app: &mut App, frame: &mut Frame, area: Rect) {
     );
 }
 
-/// The left-hand list of plugins in the manager overlay.
-fn draw_plugin_list(app: &App, frame: &mut Frame, area: Rect) {
+/// The Installed / Available tab strip at the top of the manager.
+fn draw_plugin_tabs(app: &App, frame: &mut Frame, area: Rect) {
     let manager = &app.plugin_manager;
-    let height = area.height as usize;
-    let end = (manager.scroll + height).min(manager.entries.len());
-    let mut lines: Vec<Line> = Vec::new();
-    for index in manager.scroll..end {
-        let entry = &manager.entries[index];
-        let check = if entry.enabled { "[x]" } else { "[ ]" };
-        let mark = if entry.error.is_some() { '!' } else { ' ' };
-        let text = format!(" {check}{mark} {}  ({})", entry.name, entry.kind.badge());
-        let style = if index == manager.selected {
+    let active = manager.tab();
+    let mut spans: Vec<Span> = Vec::new();
+    for tab in [ManagerTab::Installed, ManagerTab::Available] {
+        let count = match tab {
+            ManagerTab::Installed => manager.installed().len(),
+            ManagerTab::Available => manager.available().len(),
+        };
+        let style = if tab == active {
             Style::default()
                 .bg(app.theme.selection)
                 .fg(app.theme.foreground)
                 .add_modifier(Modifier::BOLD)
-        } else if entry.enabled {
-            Style::default().fg(app.theme.foreground)
         } else {
             Style::default().fg(app.theme.gutter)
         };
-        lines.push(Line::from(Span::styled(text, style)));
+        spans.push(Span::styled(format!(" {} ({count}) ", tab.title()), style));
+        spans.push(Span::raw(" "));
     }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            " No plugins installed ",
-            Style::default().fg(app.theme.gutter),
-        )));
+    let paragraph =
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(app.theme.status_bg));
+    frame.render_widget(paragraph, area);
+}
+
+/// The left-hand list of plugins in the manager overlay.
+fn draw_plugin_list(app: &App, frame: &mut Frame, area: Rect) {
+    let manager = &app.plugin_manager;
+    let height = area.height as usize;
+    let scroll = manager.list_scroll();
+    let selected = manager.list_selected();
+    let mut lines: Vec<Line> = Vec::new();
+
+    match manager.tab() {
+        ManagerTab::Installed => {
+            let entries = manager.installed();
+            let end = (scroll + height).min(entries.len());
+            for (index, entry) in entries.iter().enumerate().take(end).skip(scroll) {
+                let check = if entry.enabled { "[x]" } else { "[ ]" };
+                let mark = if entry.error.is_some() { '!' } else { ' ' };
+                let text = format!(" {check}{mark} {}  ({})", entry.name, entry.kind.badge());
+                let style = if index == selected {
+                    Style::default()
+                        .bg(app.theme.selection)
+                        .fg(app.theme.foreground)
+                        .add_modifier(Modifier::BOLD)
+                } else if entry.enabled {
+                    Style::default().fg(app.theme.foreground)
+                } else {
+                    Style::default().fg(app.theme.gutter)
+                };
+                lines.push(Line::from(Span::styled(text, style)));
+            }
+            if lines.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    " No plugins installed — press Tab for the catalog ",
+                    Style::default().fg(app.theme.gutter),
+                )));
+            }
+        }
+        ManagerTab::Available => {
+            let available = manager.available();
+            let end = (scroll + height).min(available.len());
+            for (index, plugin) in available.iter().enumerate().take(end).skip(scroll) {
+                let text = format!(" [+] {}  ({})", plugin.title, plugin.file_name);
+                let style = if index == selected {
+                    Style::default()
+                        .bg(app.theme.selection)
+                        .fg(app.theme.foreground)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(app.theme.foreground)
+                };
+                lines.push(Line::from(Span::styled(text, style)));
+            }
+            if lines.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    " Everything in the catalog is installed ",
+                    Style::default().fg(app.theme.gutter),
+                )));
+            }
+        }
     }
     let paragraph = Paragraph::new(lines).style(Style::default().bg(app.theme.status_bg));
     frame.render_widget(paragraph, area);
@@ -1207,82 +1280,127 @@ fn draw_plugin_list(app: &App, frame: &mut Frame, area: Rect) {
 /// The right-hand details pane of the plugin manager.
 fn draw_plugin_details(app: &App, frame: &mut Frame, area: Rect) {
     let theme = &app.theme;
+    let manager = &app.plugin_manager;
     let mut lines: Vec<Line> = Vec::new();
-    if let Some(entry) = app.plugin_manager.selected_entry() {
-        lines.push(Line::from(Span::styled(
-            entry.name.clone(),
-            Style::default()
-                .fg(theme.status_accent)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(vec![
-            Span::styled(entry.kind.label(), Style::default().fg(theme.tab_active)),
-            Span::raw("  "),
-            Span::styled(
-                if entry.enabled { "enabled" } else { "disabled" },
-                Style::default().fg(if entry.enabled {
-                    theme.foreground
-                } else {
-                    theme.gutter
-                }),
-            ),
-        ]));
-        lines.push(Line::from(Span::styled(
-            entry.path.display().to_string(),
-            Style::default().fg(theme.gutter),
-        )));
-        if !entry.description.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(entry.description.clone()));
-        }
-        lines.push(Line::from(""));
-        if let Some(error) = &entry.error {
-            lines.push(Line::from(Span::styled(
-                format!("error: {error}"),
-                Style::default().fg(theme.error),
-            )));
-            lines.push(Line::from(""));
-        }
-        lines.push(Line::from(Span::styled(
-            format!("Commands ({})", entry.commands.len()),
-            Style::default().fg(theme.status_accent),
-        )));
-        for command in &entry.commands {
-            let mut spans = vec![Span::raw(format!("  {}", command.title))];
-            if let Some((key, _)) = entry
-                .keybindings
-                .iter()
-                .find(|(_, title)| title == &command.title)
-            {
-                spans.push(Span::styled(
-                    format!("   {}", key.display()),
+
+    match manager.tab() {
+        ManagerTab::Available => {
+            if let Some(plugin) = manager.selected_catalog() {
+                lines.push(Line::from(Span::styled(
+                    plugin.title.to_string(),
+                    Style::default()
+                        .fg(theme.status_accent)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(vec![
+                    Span::styled("TextWrite", Style::default().fg(theme.tab_active)),
+                    Span::raw("  "),
+                    Span::styled("not installed", Style::default().fg(theme.warning)),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    plugin.file_name.to_string(),
+                    Style::default().fg(theme.gutter),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(plugin.description.to_string()));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Press Enter (or i) to install this plugin.",
                     Style::default().fg(theme.status_accent),
-                ));
-            }
-            lines.push(Line::from(spans));
-        }
-        // Bindings that point at commands the plugin never registered.
-        let orphans: Vec<&(KeySpec, String)> = entry
-            .keybindings
-            .iter()
-            .filter(|(_, title)| !entry.commands.iter().any(|c| &c.title == title))
-            .collect();
-        if !orphans.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("Keybindings ({})", entry.keybindings.len()),
-                Style::default().fg(theme.status_accent),
-            )));
-            for (key, title) in orphans {
-                lines.push(Line::from(format!("  {}  {title}", key.display())));
+                )));
+                if let Some(error) = manager.install_error() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        format!("error: {error}"),
+                        Style::default().fg(theme.error),
+                    )));
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    " Everything in the catalog is installed ",
+                    Style::default().fg(theme.gutter),
+                )));
             }
         }
-    } else {
-        lines.push(Line::from(Span::styled(
-            " No plugins installed ",
-            Style::default().fg(theme.gutter),
-        )));
+        ManagerTab::Installed => {
+            if let Some(entry) = manager.selected_entry() {
+                lines.push(Line::from(Span::styled(
+                    entry.name.clone(),
+                    Style::default()
+                        .fg(theme.status_accent)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(vec![
+                    Span::styled(entry.kind.label(), Style::default().fg(theme.tab_active)),
+                    Span::raw("  "),
+                    Span::styled(
+                        if entry.enabled { "enabled" } else { "disabled" },
+                        Style::default().fg(if entry.enabled {
+                            theme.foreground
+                        } else {
+                            theme.gutter
+                        }),
+                    ),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    entry.path.display().to_string(),
+                    Style::default().fg(theme.gutter),
+                )));
+                if !entry.description.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(entry.description.clone()));
+                }
+                lines.push(Line::from(""));
+                if let Some(error) = &entry.error {
+                    lines.push(Line::from(Span::styled(
+                        format!("error: {error}"),
+                        Style::default().fg(theme.error),
+                    )));
+                    lines.push(Line::from(""));
+                }
+                lines.push(Line::from(Span::styled(
+                    format!("Commands ({})", entry.commands.len()),
+                    Style::default().fg(theme.status_accent),
+                )));
+                for command in &entry.commands {
+                    let mut spans = vec![Span::raw(format!("  {}", command.title))];
+                    if let Some((key, _)) = entry
+                        .keybindings
+                        .iter()
+                        .find(|(_, title)| title == &command.title)
+                    {
+                        spans.push(Span::styled(
+                            format!("   {}", key.display()),
+                            Style::default().fg(theme.status_accent),
+                        ));
+                    }
+                    lines.push(Line::from(spans));
+                }
+                // Bindings that point at commands the plugin never registered.
+                let orphans: Vec<&(KeySpec, String)> = entry
+                    .keybindings
+                    .iter()
+                    .filter(|(_, title)| !entry.commands.iter().any(|c| &c.title == title))
+                    .collect();
+                if !orphans.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        format!("Keybindings ({})", entry.keybindings.len()),
+                        Style::default().fg(theme.status_accent),
+                    )));
+                    for (key, title) in orphans {
+                        lines.push(Line::from(format!("  {}  {title}", key.display())));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    " No plugins installed ",
+                    Style::default().fg(theme.gutter),
+                )));
+            }
+        }
     }
+
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.status_bg)),
         area,

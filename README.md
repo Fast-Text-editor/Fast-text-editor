@@ -34,7 +34,7 @@ fast-text/
 │   ├── fast-text-textwrite/ # TextWrite editor scripts: the `ScriptHost` bridge
 │   └── textwrite/         # TextWrite: the Fast Text scripting language — `textwrite` / `tw`
 ├── tools/gen_langs.py     # generates the language registry from Helix
-├── plugins/               # example Rhai plugins (loaded at startup)
+├── plugins/               # example plugins, Rhai and TextWrite (loaded at startup)
 ├── web/                   # browser frontend (see web/README.md)
 ├── install.sh             # universal installer: prebuilt release or source build
 └── .github/workflows/     # CI (fmt, clippy, tests) and tagged release binaries
@@ -324,9 +324,9 @@ with `FAST_TEXT_LSP=0`.
 Drop `.rhai` **plugins** or `.tw` **TextWrite scripts** into `plugins/` (next to
 the binary) or `~/.config/fast-text/plugins/`. Each script registers commands and
 keybindings; `Ctrl+P` lists them all. Scripts describe edits as *actions*
-(`insert`, `delete_selection`, `move_caret`, `set_language`, …) and read editor
-state from globals (`selected_text`, `has_selection`, `cursor`, `line`,
-`file_name`, `language`, …):
+(`insert`, `delete_selection`, `move_caret`, `set_language`, `set_theme`, …) and
+read editor state from globals (`selected_text`, `document_text`, `has_selection`,
+`cursor`, `line`, `file_name`, `language`, `theme`, …):
 
 ```rhai
 // plugins/example.rhai
@@ -354,13 +354,18 @@ script can be written in either. The repository ships several examples under
 (sort/uppercase/number lines), `markdown.tw`, and `notes.tw`. Press **`Ctrl+E`**
 to evaluate a TextWrite snippet against the current buffer and see the result in
 the status bar.
-
 ### The plugin manager
 
 Press **`Alt+M`** (or **`Ctrl+M`**, or pick *Manage plugins* from the `Ctrl+P`
-palette) to open a Visual-Studio-style **plugin manager**. It lists every
-discovered plugin with its runtime, commands, keybindings, and any load error,
-and lets you turn plugins on and off without deleting anything:
+palette) to open a Visual-Studio-style **plugin manager**. It has two tabs:
+
+* **Installed** lists every plugin found on disk with its runtime, commands,
+  keybindings, and any load error, and lets you turn plugins on and off without
+  deleting anything.
+* **Available** lists the **first-party catalog** — TextWrite plugins compiled
+  into the editor. Highlight one and press `Enter` to install it for real: the
+  source is written into your plugin directory, where it loads immediately and
+  appears under *Installed* like any other plugin.
 
 > **Tip:** a legacy terminal sends the same byte for `Ctrl+M` and `Enter`, so
 > `Ctrl+M` only reaches the editor on terminals that speak the kitty / CSI-u
@@ -370,8 +375,9 @@ and lets you turn plugins on and off without deleting anything:
 | Key | Action |
 | --- | --- |
 | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Move the selection |
-| `Space` / `Enter` / `x` | Enable or disable the selected plugin |
-| `i` | Install a plugin: copies a file into the user plugin directory |
+| `Tab` / `Shift+Tab` | Switch between *Installed* and *Available* |
+| `Space` / `Enter` / `x` | Toggle the plugin, or install the highlighted catalog entry |
+| `i` | Install a plugin from a path (on the *Installed* tab) |
 | `d` | Uninstall: delete the plugin file (asks for `y` confirmation) |
 | `r` | Rescan the plugin directories |
 | `Esc` / `q` | Close the manager |
@@ -381,7 +387,39 @@ Toggling a plugin takes effect immediately and is remembered in
 (or the palette's *Install plugin…*) asks for a path and copies the file into
 `~/.config/fast-text/plugins/`, where it is picked up right away. The manager is
 also reachable with the mouse: click a row to select it, then click it again to
-toggle it.
+toggle (or install) it.
+
+The catalog ships six plugins, all written in TextWrite and readable under
+`crates/fast-text-tui/plugin-catalog/`: **Theme pack**, **Case and lines**,
+**Statistics**, **Markdown pro**, **Whitespace**, and **Snippets**.
+
+### Themes
+
+Ten themes ship with the editor — `dark`, `light`, `one-dark`, `monokai`,
+`dracula`, `nord`, `gruvbox`, `tokyo-night`, `solarized-dark`, and
+`solarized-light`. Pick one from the `Ctrl+P` palette (*Theme: Monokai*, …),
+with `Ctrl+T` to flip between dark and light, or set it in `config.toml`:
+
+```toml
+[editor]
+theme = "monokai"
+```
+
+A plugin can also define its own palette. `define_theme(name, map)` registers a
+theme from `0xRRGGBB` colors (missing keys fall back to the dark palette) and
+`set_theme(name)` switches to it — exactly what the **Theme pack** catalog plugin
+does with its `Midnight` and `Forest` palettes:
+
+```textwrite
+define_theme("Midnight", {
+    background: 0x0B0E14,
+    keyword:    0xBB9AF7,
+    string:     0x9ECE6A,
+})
+
+fn midnight() { set_theme("Midnight") }
+command_with_desc("Theme: Midnight", "Switch to Midnight", "midnight")
+```
 
 ### Cursor style
 

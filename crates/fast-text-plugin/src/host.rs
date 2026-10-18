@@ -29,6 +29,10 @@ pub struct EditorContext {
     pub line_count: usize,
     pub file_name: String,
     pub language: String,
+    /// The name of the active color theme, e.g. `dark` or `monokai`.
+    pub theme: String,
+    /// The whole buffer as text (not just the selection).
+    pub doc_text: String,
 }
 
 type Queue = Arc<Mutex<Vec<EditorAction>>>;
@@ -198,6 +202,8 @@ fn push_context(scope: &mut Scope<'static>, ctx: &EditorContext) {
     scope.push_constant("line_count", ctx.line_count as i64);
     scope.push_constant("file_name", ctx.file_name.clone());
     scope.push_constant("language", ctx.language.clone());
+    scope.push_constant("theme", ctx.theme.clone());
+    scope.push_constant("document_text", ctx.doc_text.clone());
 }
 
 fn build_engine(queue: Queue, commands: Commands, keybindings: Keybinds) -> Engine {
@@ -330,6 +336,14 @@ fn build_engine(queue: Queue, commands: Commands, keybindings: Keybinds) -> Engi
     }
     {
         let q = queue.clone();
+        engine.register_fn("set_theme", move |name: ImmutableString| {
+            q.lock()
+                .unwrap()
+                .push(EditorAction::SetTheme(name.to_string()));
+        });
+    }
+    {
+        let q = queue.clone();
         engine.register_fn("message", move |text: ImmutableString| {
             q.lock()
                 .unwrap()
@@ -425,6 +439,20 @@ mod tests {
             actions,
             vec![EditorAction::SetCursorStyle(crate::CursorStyle::Bar)]
         );
+    }
+
+    #[test]
+    fn sets_the_theme() {
+        let mut host = PluginHost::new();
+        host.add_plugin(
+            "test",
+            r#"
+                fn mono() { set_theme("monokai"); }
+                command("Monokai", "mono");
+            "#,
+        );
+        let actions = host.run_command("Monokai", &EditorContext::default());
+        assert_eq!(actions, vec![EditorAction::SetTheme("monokai".to_string())]);
     }
 
     #[test]

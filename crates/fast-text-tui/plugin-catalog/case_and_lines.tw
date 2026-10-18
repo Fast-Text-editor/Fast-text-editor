@@ -1,0 +1,100 @@
+# Case conversions and line operations for Fast Text — a TextWrite plugin.
+#
+# Everything here appears in the Ctrl+P palette. Commands act on the current
+# selection and say so when nothing is selected.
+
+# --- Case ------------------------------------------------------------------
+
+fn tt_upper() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = upper(selected_text)
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Text tools: upper case", "Upper-case the selected text", "tt_upper")
+
+fn tt_lower() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = lower(selected_text)
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Text tools: lower case", "Lower-case the selected text", "tt_lower")
+
+fn tt_title() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = map(words(selected_text), fn(w) {
+        return upper(slice(w, 0, 1)) + slice(w, 1, len(w))
+    })
+    delete_selection()
+    insert(join(out, " "))
+}
+command_with_desc("Text tools: title case", "Capitalise every word of the selection", "tt_title")
+
+# --- Lines -----------------------------------------------------------------
+
+fn tt_sort() {
+    if not has_selection {
+        message("Select the lines to sort first")
+        return
+    }
+    let out = join(sort(lines(selected_text)), "\n")
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Text tools: sort lines", "Sort the selected lines alphabetically", "tt_sort")
+
+fn tt_reverse() {
+    if not has_selection {
+        message("Select the lines to reverse first")
+        return
+    }
+    let out = join(reverse(lines(selected_text)), "\n")
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Text tools: reverse lines", "Reverse the order of the selected lines", "tt_reverse")
+
+fn tt_dedupe() {
+    if not has_selection {
+        message("Select the lines to de-duplicate first")
+        return
+    }
+    let seen = {}
+    let kept = []
+    for line in lines(selected_text) {
+        if has(seen, line) {
+            continue
+        }
+        seen[line] = true
+        push(kept, line)
+    }
+    delete_selection()
+    insert(join(kept, "\n"))
+}
+command_with_desc("Text tools: remove duplicate lines", "Drop repeated lines from the selection", "tt_dedupe")
+
+fn tt_number() {
+    if not has_selection {
+        message("Select the lines to number first")
+        return
+    }
+    let n = 0
+    let numbered = []
+    for line in lines(selected_text) {
+        n += 1
+        push(numbered, "{n}: {line}")
+    }
+    delete_selection()
+    insert(join(numbered, "\n"))
+}
+command_with_desc("Text tools: number lines", "Prefix each selected line with its number", "tt_number")

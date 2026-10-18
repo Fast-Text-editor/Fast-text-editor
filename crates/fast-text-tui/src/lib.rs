@@ -5,6 +5,7 @@
 //! `fast-text` and the short `ft` binaries can share the same entry point.
 
 pub mod app;
+pub mod catalog;
 pub mod config;
 pub mod find_in_files;
 pub mod lsp;

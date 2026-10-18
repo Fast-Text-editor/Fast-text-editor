@@ -1,0 +1,113 @@
+# Theme switching for Fast Text — a TextWrite plugin.
+#
+# Every built-in theme becomes a "Theme: ..." command in the Ctrl+P palette,
+# two extra palettes are defined right here with `define_theme`, and Alt+T
+# cycles through the whole pack.
+#
+# `define_theme(name, map)` registers a theme; `set_theme(name)` switches to
+# it. Colors are 0xRRGGBB ints; any key you leave out keeps its dark-theme
+# value. Keys: background, foreground, gutter, gutter_active, cursor_line,
+# selection, status_bg, status_fg, status_accent, prompt_bg, tab_active,
+# tab_inactive, error, warning, plain, keyword, type, function, string,
+# number, comment, operator, punctuation, constant, attribute, variable.
+
+# --- Two themes that live in this file -------------------------------------
+
+define_theme("Midnight", {
+    background: 0x0B0E14,
+    foreground: 0xC5C9D1,
+    gutter: 0x3A4050,
+    gutter_active: 0xD7DAE0,
+    cursor_line: 0x12161F,
+    selection: 0x1E2636,
+    status_bg: 0x080A0F,
+    status_fg: 0xC5C9D1,
+    status_accent: 0x7AA2F7,
+    prompt_bg: 0x12161F,
+    tab_active: 0x7AA2F7,
+    tab_inactive: 0x3A4050,
+    error: 0xFF6B81,
+    warning: 0xFFC777,
+    keyword: 0xBB9AF7,
+    type: 0x2AC3DE,
+    function: 0x7AA2F7,
+    string: 0x9ECE6A,
+    number: 0xFF9E64,
+    comment: 0x565F89,
+    operator: 0x89DDFF,
+    constant: 0xFF9E64,
+    attribute: 0x7AA2F7,
+    variable: 0xC5C9D1,
+})
+
+define_theme("Forest", {
+    background: 0x1B241E,
+    foreground: 0xD3E0D3,
+    gutter: 0x4A5D4E,
+    gutter_active: 0xDFEADF,
+    cursor_line: 0x223026,
+    selection: 0x2E4234,
+    status_bg: 0x141B16,
+    status_fg: 0xD3E0D3,
+    status_accent: 0x8FBF6A,
+    prompt_bg: 0x223026,
+    tab_active: 0x8FBF6A,
+    tab_inactive: 0x4A5D4E,
+    error: 0xE06C75,
+    warning: 0xE0C078,
+    keyword: 0xE0A458,
+    type: 0x7FB69E,
+    function: 0x8FBF6A,
+    string: 0xC9D97B,
+    number: 0xE0A458,
+    comment: 0x5C705C,
+    operator: 0x7FB69E,
+    constant: 0xE0A458,
+    attribute: 0x8FBF6A,
+    variable: 0xD3E0D3,
+})
+
+# --- One command per theme -------------------------------------------------
+
+fn theme_dark()      { set_theme("dark") }
+fn theme_light()     { set_theme("light") }
+fn theme_one_dark()  { set_theme("one-dark") }
+fn theme_monokai()   { set_theme("monokai") }
+fn theme_dracula()   { set_theme("dracula") }
+fn theme_nord()      { set_theme("nord") }
+fn theme_gruvbox()   { set_theme("gruvbox") }
+fn theme_tokyo()     { set_theme("tokyo-night") }
+fn theme_solarized() { set_theme("solarized-dark") }
+fn theme_paper()     { set_theme("solarized-light") }
+fn theme_midnight()  { set_theme("Midnight") }
+fn theme_forest()    { set_theme("Forest") }
+
+command_with_desc("Theme: Dark", "Switch to the default dark theme", "theme_dark")
+command_with_desc("Theme: Light", "Switch to the light theme", "theme_light")
+command_with_desc("Theme: One Dark", "Switch to the One Dark theme", "theme_one_dark")
+command_with_desc("Theme: Monokai", "Switch to the Monokai theme", "theme_monokai")
+command_with_desc("Theme: Dracula", "Switch to the Dracula theme", "theme_dracula")
+command_with_desc("Theme: Nord", "Switch to the Nord theme", "theme_nord")
+command_with_desc("Theme: Gruvbox", "Switch to the Gruvbox theme", "theme_gruvbox")
+command_with_desc("Theme: Tokyo Night", "Switch to the Tokyo Night theme", "theme_tokyo")
+command_with_desc("Theme: Solarized Dark", "Switch to the Solarized dark theme", "theme_solarized")
+command_with_desc("Theme: Solarized Light", "Switch to the Solarized light theme", "theme_paper")
+command_with_desc("Theme: Midnight", "Switch to the Midnight theme defined here", "theme_midnight")
+command_with_desc("Theme: Forest", "Switch to the Forest theme defined here", "theme_forest")
+
+# --- Cycle -----------------------------------------------------------------
+
+let theme_pack_order = ["dark", "one-dark", "monokai", "dracula", "nord", "gruvbox",
+                        "tokyo-night", "solarized-dark", "Midnight", "Forest", "light"]
+
+fn next_theme() {
+    let here = index_of(theme_pack_order, theme)
+    let step = 0
+    if here >= 0 {
+        step = here + 1
+    }
+    set_theme(theme_pack_order[step % len(theme_pack_order)])
+}
+
+command_with_desc("Theme: Next", "Cycle to the next theme in the pack", "next_theme")
+bind("alt+t", "Theme: Next")

@@ -686,6 +686,12 @@ impl Interpreter {
                 let text = as_text(&need(&args, 0, "lines", span)?, "lines", span)?;
                 Ok(Value::list(text.lines().map(Value::str).collect()))
             }
+            "words" => {
+                let text = as_text(&need(&args, 0, "words", span)?, "words", span)?;
+                Ok(Value::list(
+                    text.split_whitespace().map(Value::str).collect(),
+                ))
+            }
 
             // --- Functional -----------------------------------------------
             "map" => {

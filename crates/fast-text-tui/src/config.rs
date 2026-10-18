@@ -19,7 +19,9 @@ pub const TEMPLATE: &str = r#"# Fast Text configuration
 [editor]
 # bar | block | underline
 cursor_style = "bar"
-# dark | light
+# dark | light | one-dark | monokai | dracula | nord | gruvbox
+# | tokyo-night | solarized-dark | solarized-light
+# (a plugin can define more names with define_theme)
 theme        = "dark"
 # start with the folder explorer visible
 sidebar      = false
@@ -75,8 +77,8 @@ pub struct KeyBinding {
 pub struct Config {
     /// Terminal cursor shape.
     pub cursor_style: CursorStyle,
-    /// Use the light palette instead of the dark one.
-    pub light_theme: bool,
+    /// The name of the color theme, e.g. `dark`, `light` or `monokai`.
+    pub theme: String,
     /// Start with the folder explorer visible.
     pub sidebar: bool,
     /// List dot-files in the explorer.
@@ -99,7 +101,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             cursor_style: CursorStyle::Bar,
-            light_theme: false,
+            theme: "dark".to_string(),
             sidebar: false,
             show_hidden: false,
             lsp: true,
@@ -221,13 +223,18 @@ impl Config {
                         "line {line_no}: cursor_style must be bar, block or underline"
                     )),
                 },
-                "theme" => match value.to_ascii_lowercase().as_str() {
-                    "dark" => self.light_theme = false,
-                    "light" => self.light_theme = true,
-                    _ => self
-                        .warnings
-                        .push(format!("line {line_no}: theme must be dark or light")),
-                },
+                "theme" => {
+                    if value.trim().is_empty() {
+                        self.warnings.push(format!(
+                            "line {line_no}: theme needs a name, e.g. dark or monokai"
+                        ));
+                    } else {
+                        // The name is kept as written: plugin-defined themes are
+                        // only known once the plugins have loaded, so the editor
+                        // resolves (and validates) it at startup.
+                        self.theme = value.trim().to_string();
+                    }
+                }
                 // (`visible` is accepted as a synonym for `sidebar`.)
                 "sidebar" | "visible" => {
                     set_bool(&mut self.sidebar, value, line_no, &mut self.warnings)
@@ -345,7 +352,7 @@ mod tests {
     fn defaults_are_sane() {
         let c = Config::default();
         assert_eq!(c.cursor_style, CursorStyle::Bar);
-        assert!(!c.light_theme);
+        assert_eq!(c.theme, "dark");
         assert!(!c.sidebar);
         assert!(!c.show_hidden);
         assert!(c.lsp);
@@ -358,7 +365,7 @@ mod tests {
         let c = Config::parse(TEMPLATE);
         assert!(c.warnings.is_empty(), "template warnings: {:?}", c.warnings);
         assert_eq!(c.cursor_style, CursorStyle::Bar);
-        assert!(!c.light_theme);
+        assert_eq!(c.theme, "dark");
         assert!(c.lsp);
         assert!(c.check_updates);
         assert!(c.keys.is_empty());
@@ -393,7 +400,7 @@ mod tests {
         );
         assert!(c.warnings.is_empty(), "{:?}", c.warnings);
         assert_eq!(c.cursor_style, CursorStyle::Block);
-        assert!(c.light_theme);
+        assert_eq!(c.theme, "light");
         assert!(c.sidebar);
         assert!(!c.lsp);
         assert!(c.show_hidden);
@@ -461,9 +468,11 @@ mod tests {
             "#,
         );
         assert_eq!(c.cursor_style, CursorStyle::Bar);
-        assert!(!c.light_theme);
+        // An unknown theme name is stored; the editor reports it at startup so
+        // a plugin-defined theme can still be selected from the config.
+        assert_eq!(c.theme, "neon");
         assert!(c.lsp);
-        assert_eq!(c.warnings.len(), 7, "{:?}", c.warnings);
+        assert_eq!(c.warnings.len(), 6, "{:?}", c.warnings);
     }
 
     #[test]

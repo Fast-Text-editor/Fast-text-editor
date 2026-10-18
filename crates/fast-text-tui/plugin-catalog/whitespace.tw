@@ -1,0 +1,70 @@
+# Whitespace cleanup for Fast Text — a TextWrite plugin.
+#
+# Trailing spaces, tabs vs. spaces and blank-line runs, applied to the current
+# selection. Demonstrates string slicing in a loop.
+
+fn ws_rstrip(line) {
+    let end = len(line)
+    while end > 0 and slice(line, end - 1, end) is " " {
+        end -= 1
+    }
+    return slice(line, 0, end)
+}
+
+fn ws_trim_trailing() {
+    if not has_selection {
+        message("Select the lines to clean first")
+        return
+    }
+    let out = map(lines(selected_text), fn(l) {
+        return ws_rstrip(l)
+    })
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Whitespace: trim trailing spaces", "Remove spaces at the end of each selected line", "ws_trim_trailing")
+
+fn ws_tabs_to_spaces() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = replace(selected_text, "\t", "    ")
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Whitespace: tabs to spaces", "Replace tabs with four spaces in the selection", "ws_tabs_to_spaces")
+
+fn ws_spaces_to_tabs() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = replace(selected_text, "    ", "\t")
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Whitespace: spaces to tabs", "Replace four-space runs with tabs in the selection", "ws_spaces_to_tabs")
+
+fn ws_collapse_blank() {
+    if not has_selection {
+        message("Select some text first")
+        return
+    }
+    let out = []
+    let blank = false
+    for line in lines(selected_text) {
+        if trim(line) is "" {
+            if blank {
+                continue
+            }
+            blank = true
+        } else {
+            blank = false
+        }
+        push(out, line)
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Whitespace: collapse blank lines", "Squeeze runs of blank lines into one", "ws_collapse_blank")

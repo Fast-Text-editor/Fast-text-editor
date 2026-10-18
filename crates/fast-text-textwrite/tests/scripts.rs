@@ -232,6 +232,58 @@ fn shipped_example_script_loads_and_registers_commands() {
 }
 
 #[test]
+fn every_shipped_plugin_runs_without_runtime_errors() {
+    // Loading only parses a script; running every command it registers catches
+    // calls to missing builtins (this is how `words` was caught) and bad
+    // arguments. Commands run both with and without a selection.
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins");
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .expect("plugins/ should exist")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("tw"))
+        .collect();
+    entries.sort();
+    assert!(!entries.is_empty(), "no .tw plugins found");
+
+    for path in entries {
+        let source = std::fs::read_to_string(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let mut host = ScriptHost::new();
+        host.add_script(&name, &source);
+        assert!(
+            host.errors.is_empty(),
+            "{name} load errors: {:?}",
+            host.errors
+        );
+
+        let selected = "the quick brown fox\njumps over\t2 lazy dogs";
+        let contexts = [
+            EditorContext::default(),
+            EditorContext {
+                has_selection: true,
+                selected_text: selected.to_string(),
+                selection_start: 0,
+                selection_end: selected.len(),
+                doc_text: selected.to_string(),
+                ..Default::default()
+            },
+        ];
+        let titles = host.command_titles();
+        for context in &contexts {
+            for title in &titles {
+                host.run_command(title, context);
+            }
+        }
+        assert!(
+            host.errors.is_empty(),
+            "{name} runtime errors: {:?}",
+            host.errors
+        );
+    }
+}
+
+#[test]
 fn shipped_cursor_script_loads_and_changes_the_cursor() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/cursor.tw");
     let source = std::fs::read_to_string(path).expect("cursor.tw should exist");
@@ -258,6 +310,67 @@ fn shipped_cursor_script_loads_and_changes_the_cursor() {
         .map(|(k, _)| k.display())
         .collect();
     assert_eq!(keys, vec!["Alt+1", "Alt+2", "Alt+3"]);
+}
+
+#[test]
+fn set_theme_queues_a_theme_switch() {
+    let mut host = host_with(
+        "test",
+        r#"
+            fn mono() { set_theme("monokai") }
+            command("Monokai", "mono")
+        "#,
+    );
+    assert_eq!(
+        host.run_command("Monokai", &EditorContext::default()),
+        vec![EditorAction::SetTheme("monokai".to_string())]
+    );
+}
+
+#[test]
+fn define_theme_registers_a_usable_palette() {
+    let host = host_with(
+        "test",
+        r#"
+            define_theme("Midnight", { background: 0x0B0E14, keyword: 0xBB9AF7 })
+            fn mono() { set_theme("Midnight") }
+            command("Midnight", "mono")
+        "#,
+    );
+    let themes = host.themes();
+    assert_eq!(themes.len(), 1);
+    assert_eq!(themes[0].0, "Midnight");
+    assert!(themes[0]
+        .1
+        .iter()
+        .any(|(key, value)| key == "background" && *value == 0x0B0E14));
+    assert_eq!(host.theme_names(), vec!["Midnight".to_string()]);
+}
+
+#[test]
+fn define_theme_rejects_non_int_colors() {
+    let mut host = ScriptHost::new();
+    host.add_script("bad", "define_theme(\"x\", { background: \"nope\" })\n");
+    assert!(!host.errors.is_empty(), "a string color is an error");
+}
+
+#[test]
+fn exposes_the_active_theme_global() {
+    let mut host = host_with(
+        "test",
+        r#"
+            fn show() { message(theme) }
+            command("Theme", "show")
+        "#,
+    );
+    let ctx = EditorContext {
+        theme: "monokai".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(
+        host.run_command("Theme", &ctx),
+        vec![EditorAction::Message("monokai".to_string())]
+    );
 }
 
 #[test]

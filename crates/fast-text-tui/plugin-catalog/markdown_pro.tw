@@ -1,0 +1,61 @@
+# Markdown structures for Fast Text — a TextWrite plugin.
+#
+# Headings, tables, fenced code and links, all from Ctrl+P. Bind your own keys
+# in config.toml, e.g. `alt+h = "Markdown pro: heading 2"`.
+
+fn mdp_heading(level) {
+    let hashes = ""
+    repeat level times {
+        hashes += "#"
+    }
+    move_caret("line_start", false)
+    insert(hashes + " ")
+}
+
+fn mdp_h1() { mdp_heading(1) }
+fn mdp_h2() { mdp_heading(2) }
+fn mdp_h3() { mdp_heading(3) }
+
+command_with_desc("Markdown pro: heading 1", "Prefix the line with #", "mdp_h1")
+command_with_desc("Markdown pro: heading 2", "Prefix the line with ##", "mdp_h2")
+command_with_desc("Markdown pro: heading 3", "Prefix the line with ###", "mdp_h3")
+
+fn mdp_table() {
+    insert("| Column | Column |\n| --- | --- |\n| Cell | Cell |\n")
+}
+command_with_desc("Markdown pro: table", "Insert a two-column table skeleton", "mdp_table")
+
+fn mdp_code() {
+    if has_selection {
+        let text = selected_text
+        delete_selection()
+        insert("```\n{text}\n```")
+    } else {
+        insert("```\n\n```")
+        move_caret("up", false)
+    }
+}
+command_with_desc("Markdown pro: code fence", "Wrap the selection in a fenced code block", "mdp_code")
+
+fn mdp_link() {
+    if has_selection {
+        let text = selected_text
+        delete_selection()
+        insert("[{text}](url)")
+    } else {
+        insert("[](url)")
+        move_caret("left", false)
+    }
+}
+command_with_desc("Markdown pro: link", "Turn the selection into a Markdown link", "mdp_link")
+
+fn mdp_quote() {
+    move_caret("line_start", false)
+    insert("> ")
+}
+command_with_desc("Markdown pro: block quote", "Prefix the line with a quote marker", "mdp_quote")
+
+fn mdp_rule() {
+    insert("\n---\n")
+}
+command_with_desc("Markdown pro: horizontal rule", "Insert a thematic break", "mdp_rule")

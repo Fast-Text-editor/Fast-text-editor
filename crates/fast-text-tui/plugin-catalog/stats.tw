@@ -1,0 +1,51 @@
+# Word, character and line counts for Fast Text — a TextWrite plugin.
+#
+# `document_text` is the whole buffer; `selected_text` is the selection. This
+# plugin reports whichever is relevant, either as a status message or pasted
+# into the buffer at the caret.
+
+fn stats_snapshot() {
+    let text = document_text
+    let scope_name = "Document"
+    if has_selection {
+        text = selected_text
+        scope_name = "Selection"
+    }
+    let word_total = len(words(text))
+    let char_total = len(text)
+    let line_total = len(lines(text))
+    let minutes = (word_total + 199) / 200
+    return "{scope_name}: {word_total} words, {char_total} characters, {line_total} lines, ~{minutes} min read"
+}
+
+fn stats_report() {
+    message(stats_snapshot())
+}
+command_with_desc("Statistics: report", "Count the words, characters and lines", "stats_report")
+
+fn stats_insert() {
+    let text = ""
+    if has_selection {
+        text = selected_text
+    } else {
+        text = document_text
+    }
+    insert("{len(words(text))} words, {len(text)} characters, {len(lines(text))} lines")
+}
+command_with_desc("Statistics: insert counts", "Insert the counts at the caret", "stats_insert")
+
+fn stats_longest_line() {
+    let source = document_text
+    if has_selection {
+        source = selected_text
+    }
+    let longest = 0
+    for line in lines(source) {
+        let width = len(line)
+        if width > longest {
+            longest = width
+        }
+    }
+    message("Longest line: {longest} characters")
+}
+command_with_desc("Statistics: longest line", "Report the longest line's width", "stats_longest_line")
