@@ -3174,7 +3174,8 @@ mod tests {
         let mut app = empty_app();
         app.handle_key(ctrl('o'));
         // An existing directory exists but cannot be read as text.
-        for c in "/tmp/opencode".chars() {
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        for c in dir.chars() {
             app.handle_key(key(KeyCode::Char(c)));
         }
         app.handle_key(key(KeyCode::Enter));
