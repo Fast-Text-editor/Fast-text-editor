@@ -216,7 +216,7 @@ function Resolve-Dirs {
     $script:ManifestPath = Join-Path $script:Prefix 'installed-files.txt'
     $verb = if ($Uninstall) { 'Removing from' } elseif ($Check) { 'Looking at' } else { 'Installing into' }
     if ($script:Adopted) {
-        Write-Log "Found Fast Text already installed at $($script:BinDir); updating it in place"
+        Write-Log "Using the Fast Text already on your PATH: $($script:BinDir)"
     }
     Write-Log "$verb $($script:BinDir)"
 }

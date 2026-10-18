@@ -302,7 +302,7 @@ resolve_dirs() {
         verb="Installing into"
     fi
     if [ "$ADOPTED" = 1 ]; then
-        log "Found Fast Text already installed at $BIN_DIR; updating it in place"
+        log "Using the Fast Text already on your PATH: $BIN_DIR"
     fi
     if [ -n "$SUDO" ]; then
         command -v sudo >/dev/null 2>&1 ||

@@ -107,7 +107,7 @@ jobs:
           chmod +x "$bin/fast-text"
           out="$(PATH="$bin:$PATH" FAST_TEXT_LATEST_TAG=v0.2.0 sh install.sh --dry-run 2>&1)"
           printf '%s\n' "$out"
-          printf '%s\n' "$out" | grep -q "Found Fast Text already installed at $bin"
+          printf '%s\n' "$out" | grep -q "Using the Fast Text already on your PATH: $bin"
           printf '%s\n' "$out" | grep -q "Updating from v0.1.0 to v0.2.0"
 
   install-script-windows:
