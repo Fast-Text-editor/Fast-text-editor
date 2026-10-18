@@ -22,6 +22,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Language-server commands** (TUI + `fast-text-lsp`): rename, format, code
   actions and document symbols, all applied through workspace edits.
 - **More example plugins**: `text_tools.tw`, `markdown.tw`, and `notes.tw`.
+- **Update notifications** (`fast-text-update`, TUI + GUI): at startup the
+  editor asks GitHub for the newest release, throttled to once a day and
+  silent when offline, and offers a window naming the version with **Yes,
+  update** / **Not now**. Accepting downloads the archive, swaps the
+  executables in place and offers a restart. `Alt+U` (or *Check for updates*
+  in the palette, or **Help → Check for updates** in the desktop app) checks
+  on demand; the running version is shown in the status bar. Controls:
+  `[editor] check_updates` and `FAST_TEXT_UPDATE_CHECK=0`.
+- **Installer update support**: `install.sh --check` / `--update` and
+  `install.ps1 -Check` / `-Update` compare the recorded installation with the
+  newest release, and the installed version is kept in
+  `PREFIX/share/fast-text/installed-version`.
 
 ## [0.1.0]
 

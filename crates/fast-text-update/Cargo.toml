@@ -1,0 +1,18 @@
+[package]
+name = "fast-text-update"
+description = "Release checking and self-update for the Fast Text editors."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "fast_text_update"
+path = "src/lib.rs"

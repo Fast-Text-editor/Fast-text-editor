@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use fast_text_core::{Document, Position, SearchDirection};
@@ -7,6 +8,7 @@ use fast_text_lsp::{Diagnostic, LspRange, Severity, TextEdit, WorkspaceEdit};
 use fast_text_plugin::{CursorStyle, EditorAction, EditorContext, KeyName, KeySpec, PluginHost};
 use fast_text_syntax::{highlight_line, HighlightSpan, LanguageId, LineState};
 use fast_text_textwrite::ScriptHost;
+use fast_text_update::Release;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -262,6 +264,7 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "Stop recording",
     "Replay macro",
     "Save macro…",
+    "Check for updates",
 ];
 
 /// A place a picker row can jump to.
@@ -288,6 +291,81 @@ enum PickerAction {
 enum PickerKind {
     Generic,
     FindInFiles,
+}
+
+/// What the self-update dialog is currently showing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateState {
+    /// Nothing to show.
+    Idle,
+    /// A release check is running in the background.
+    Checking,
+    /// A newer release exists; the dialog asks whether to install it.
+    Available {
+        /// The release tag, e.g. `v0.2.0`.
+        tag: String,
+    },
+    /// The archive is being downloaded and unpacked.
+    Installing {
+        /// The release tag being installed.
+        tag: String,
+        /// Short progress text for the dialog.
+        progress: String,
+    },
+    /// Installed; the dialog offers a restart.
+    ReadyToRestart {
+        /// The release tag that is now on disk.
+        tag: String,
+    },
+    /// The last check or install failed; the dialog shows why.
+    Failed {
+        /// The release involved, when there was one.
+        tag: Option<String>,
+        /// What went wrong.
+        error: String,
+    },
+}
+
+impl UpdateState {
+    /// True while the dialog should capture keys and clicks.
+    pub fn is_dialog_open(&self) -> bool {
+        !matches!(self, UpdateState::Idle)
+    }
+}
+
+/// A clickable button inside the update dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateButton {
+    /// Install the offered release now.
+    Yes,
+    /// Install the offered release later.
+    No,
+    /// Restart into the freshly installed release.
+    Restart,
+    /// Keep running this session; restart by hand.
+    Later,
+    /// Dismiss a failure notice.
+    Close,
+}
+
+/// Messages sent back by the update worker threads.
+enum UpdateEvent {
+    /// The result of a release check.
+    Checked {
+        /// True when the user asked for this check by hand.
+        manual: bool,
+        /// The newest release, or the reason there is none.
+        result: Result<Option<Release>, String>,
+    },
+    /// A short progress note while installing.
+    Progress(String),
+    /// The install finished (or did not).
+    Installed {
+        /// The release tag that was being installed.
+        tag: String,
+        /// The executables replaced, or the reason there are none.
+        result: Result<Vec<String>, String>,
+    },
 }
 
 /// A clickable region of the tab bar, recorded while it is drawn.
@@ -394,6 +472,18 @@ pub struct App {
     macros: HashMap<String, Vec<KeyEvent>>,
     /// True while a macro is replaying (so replays are not re-recorded).
     replaying: bool,
+    /// The self-update dialog's state.
+    pub update: UpdateState,
+    /// Button rectangles of the update dialog, refreshed on every draw.
+    pub update_hits: Vec<(Rect, UpdateButton)>,
+    /// Whether a startup check is allowed (`check_updates`, env override).
+    pub update_checks_enabled: bool,
+    /// Where the record of past checks lives (next to `config.toml`).
+    pub update_record_path: Option<PathBuf>,
+    /// Receiver for the update worker threads.
+    update_rx: Option<Receiver<UpdateEvent>>,
+    /// Cloneable sender so every worker can report back.
+    update_tx: Option<Sender<UpdateEvent>>,
 }
 
 impl App {
@@ -470,6 +560,12 @@ impl App {
             last_macro: None,
             macros: HashMap::new(),
             replaying: false,
+            update: UpdateState::Idle,
+            update_hits: Vec::new(),
+            update_checks_enabled: true,
+            update_record_path: Config::path().map(|p| p.with_file_name("update-record")),
+            update_rx: None,
+            update_tx: None,
         }
     }
 
@@ -490,6 +586,7 @@ impl App {
         self.sidebar.set_show_hidden(config.show_hidden);
         self.keybindings = config.key_map();
         self.config_path = config.path.clone();
+        self.update_checks_enabled = config.check_updates && env_update_checks_enabled();
         config.warnings
     }
 
@@ -752,6 +849,10 @@ impl App {
                 };
                 true
             }
+            "Check for updates" => {
+                self.begin_update_check(true);
+                true
+            }
             _ => false,
         }
     }
@@ -884,6 +985,7 @@ impl App {
                     input: String::new(),
                 }
             }
+            "check_updates" | "check_for_updates" | "update_check" => self.begin_update_check(true),
             _ => {
                 if let Some(name) = id.strip_prefix("macro_") {
                     self.run_named_macro(name);
@@ -943,6 +1045,272 @@ impl App {
         }
         self.config_path = Some(path.clone());
         self.open_path(path);
+    }
+
+    // --- Self-update -------------------------------------------------------
+
+    /// Starts a release check. Automatic checks are throttled by the on-disk
+    /// record; manual ones (Alt+U, the palette) always run.
+    pub fn begin_update_check(&mut self, manual: bool) {
+        if !self.update_checks_enabled {
+            if manual {
+                self.set_error("Update checks are off (set check_updates = true in config.toml)");
+            }
+            return;
+        }
+        if matches!(
+            self.update,
+            UpdateState::Checking | UpdateState::Installing { .. }
+        ) {
+            return;
+        }
+        if !manual {
+            if let Some(record) = self.update_record() {
+                if let Some(last) = record.last_check {
+                    if fast_text_update::now_secs().saturating_sub(last)
+                        < fast_text_update::CHECK_INTERVAL_SECS
+                    {
+                        return;
+                    }
+                }
+                // A release the user declined stays quiet until a newer one ships.
+                if record.latest.is_some() && record.latest == record.declined {
+                    return;
+                }
+            }
+        }
+        self.update = UpdateState::Checking;
+        if manual {
+            self.set_message("Checking for updates…");
+        }
+        let Some(tx) = self.update_sender() else {
+            self.update = UpdateState::Idle;
+            return;
+        };
+        spawn_worker(move || {
+            let result = fast_text_update::latest_release(10);
+            let _ = tx.send(UpdateEvent::Checked { manual, result });
+        });
+    }
+
+    /// Handles a key while the update dialog is open.
+    fn handle_update_key(&mut self, key: KeyEvent) -> bool {
+        let yes = matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter);
+        let no = matches!(key.code, KeyCode::Char('n' | 'N') | KeyCode::Esc);
+        match self.update.clone() {
+            UpdateState::Available { tag } => {
+                if yes {
+                    self.begin_update_install(tag);
+                } else if no {
+                    self.record_declined_update();
+                    self.update = UpdateState::Idle;
+                    self.set_message("Update postponed — Alt+U checks again");
+                }
+            }
+            UpdateState::ReadyToRestart { tag } => {
+                if yes {
+                    self.restart_after_update(&tag);
+                } else if no {
+                    self.update = UpdateState::Idle;
+                    self.set_message(format!("{tag} is installed — restart Fast Text to use it"));
+                }
+            }
+            // A failed update closes on any key; an install runs to the end.
+            UpdateState::Failed { .. } => self.update = UpdateState::Idle,
+            UpdateState::Installing { .. } | UpdateState::Checking | UpdateState::Idle => {}
+        }
+        true
+    }
+
+    /// Runs the action of a clicked update-dialog button.
+    fn run_update_button(&mut self, button: UpdateButton) {
+        match (button, self.update.clone()) {
+            (UpdateButton::Yes, UpdateState::Available { tag }) => self.begin_update_install(tag),
+            (UpdateButton::No, UpdateState::Available { .. }) => {
+                self.record_declined_update();
+                self.update = UpdateState::Idle;
+                self.set_message("Update postponed — Alt+U checks again");
+            }
+            (UpdateButton::Restart, UpdateState::ReadyToRestart { tag }) => {
+                self.restart_after_update(&tag)
+            }
+            (UpdateButton::Later | UpdateButton::No, UpdateState::ReadyToRestart { .. }) => {
+                self.update = UpdateState::Idle;
+                self.set_message("Restart Fast Text later to finish the update");
+            }
+            (UpdateButton::Close | UpdateButton::No | UpdateButton::Later, _) => {
+                self.update = UpdateState::Idle
+            }
+            _ => {}
+        }
+    }
+
+    /// Downloads the release in the background and swaps the binaries in place.
+    fn begin_update_install(&mut self, tag: String) {
+        self.update = UpdateState::Installing {
+            tag: tag.clone(),
+            progress: "Starting…".into(),
+        };
+        let Some(tx) = self.update_sender() else {
+            self.update = UpdateState::Failed {
+                tag: Some(tag),
+                error: "no update worker available".to_string(),
+            };
+            return;
+        };
+        spawn_worker(move || {
+            let progress_tx = tx.clone();
+            let result = fast_text_update::download_and_install(&tag, &mut |message| {
+                let _ = progress_tx.send(UpdateEvent::Progress(message.to_string()));
+            });
+            let _ = tx.send(UpdateEvent::Installed { tag, result });
+        });
+    }
+
+    /// Spawns the freshly updated editor and quits this one.
+    fn restart_after_update(&mut self, tag: &str) {
+        match spawn_restarted_editor() {
+            Ok(()) => self.should_quit = true,
+            Err(e) => {
+                let error = format!("Could not restart automatically: {e}");
+                self.update = UpdateState::Failed {
+                    tag: Some(tag.to_string()),
+                    error: error.clone(),
+                };
+                self.set_error(error);
+            }
+        }
+    }
+
+    /// Drains messages from the update workers (called on every tick).
+    fn poll_update_events(&mut self) {
+        let mut events = Vec::new();
+        if let Some(rx) = &self.update_rx {
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+        }
+        for event in events {
+            self.apply_update_event(event);
+        }
+    }
+
+    /// Folds one worker message into the dialog state.
+    fn apply_update_event(&mut self, event: UpdateEvent) {
+        match event {
+            UpdateEvent::Checked { manual, result } => match result {
+                Ok(Some(release)) => {
+                    let declined = self.note_update_check(Some(&release.tag));
+                    // GitHub names its newest release whether or not it is
+                    // newer than this build; only offer a real upgrade.
+                    if !fast_text_update::is_newer(&release.version, env!("CARGO_PKG_VERSION")) {
+                        if manual {
+                            self.set_message(format!(
+                                "Fast Text v{} is up to date",
+                                env!("CARGO_PKG_VERSION")
+                            ));
+                        }
+                        self.update = UpdateState::Idle;
+                        return;
+                    }
+                    // Never nag about a release the user already declined.
+                    if !manual && declined.as_deref() == Some(release.tag.as_str()) {
+                        self.update = UpdateState::Idle;
+                        return;
+                    }
+                    self.update = UpdateState::Available {
+                        tag: release.tag.clone(),
+                    };
+                    self.set_message(format!(
+                        "Fast Text {} is available (you have v{})",
+                        release.tag,
+                        env!("CARGO_PKG_VERSION")
+                    ));
+                }
+                Ok(None) => {
+                    self.note_update_check(None);
+                    if manual {
+                        self.set_message(format!(
+                            "Fast Text v{} is up to date",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                    }
+                    self.update = UpdateState::Idle;
+                }
+                Err(error) => {
+                    self.note_update_check(None);
+                    if manual {
+                        self.set_error(format!("Update check failed: {error}"));
+                    }
+                    // Offline at startup is normal life, not an error.
+                    self.update = UpdateState::Idle;
+                }
+            },
+            UpdateEvent::Progress(message) => {
+                if let UpdateState::Installing { tag, .. } = &self.update {
+                    self.update = UpdateState::Installing {
+                        tag: tag.clone(),
+                        progress: message,
+                    };
+                }
+            }
+            UpdateEvent::Installed { tag, result } => match result {
+                Ok(_replaced) => {
+                    self.update = UpdateState::ReadyToRestart { tag: tag.clone() };
+                    self.set_message(format!("{tag} installed — restart Fast Text to finish"));
+                }
+                Err(error) => {
+                    self.update = UpdateState::Failed {
+                        tag: Some(tag),
+                        error: error.clone(),
+                    };
+                    self.set_error(format!("Update failed: {error}"));
+                }
+            },
+        }
+    }
+
+    /// Records that a check ran (and what it found), returning the declined
+    /// tag so callers can decide whether to nag.
+    fn note_update_check(&mut self, latest: Option<&str>) -> Option<String> {
+        let path = self.update_record_path.clone()?;
+        let mut record = fast_text_update::load_record(&path);
+        record.last_check = Some(fast_text_update::now_secs());
+        if let Some(latest) = latest {
+            record.latest = Some(latest.to_string());
+        }
+        let declined = record.declined.clone();
+        let _ = fast_text_update::save_record(&path, &record);
+        declined
+    }
+
+    /// Remembers that the user said no to the offered release.
+    fn record_declined_update(&mut self) {
+        if let UpdateState::Available { tag } = &self.update {
+            let tag = tag.clone();
+            if let Some(path) = self.update_record_path.clone() {
+                let mut record = fast_text_update::load_record(&path);
+                record.declined = Some(tag);
+                let _ = fast_text_update::save_record(&path, &record);
+            }
+        }
+    }
+
+    /// The last check record, if this machine has somewhere to keep one.
+    fn update_record(&self) -> Option<fast_text_update::CheckRecord> {
+        self.update_record_path
+            .as_ref()
+            .map(|path| fast_text_update::load_record(path))
+    }
+
+    /// Lazily creates the channel the worker threads report back through.
+    fn update_sender(&mut self) -> Option<Sender<UpdateEvent>> {
+        if self.update_tx.is_none() {
+            let (tx, rx) = mpsc::channel();
+            self.update_tx = Some(tx.clone());
+            self.update_rx = Some(rx);
+        }
+        self.update_tx.clone()
     }
 
     /// Every registered command title: built-ins, Rhai plugins, TextWrite scripts.
@@ -1042,6 +1410,7 @@ impl App {
     /// automation actions, then keeps servers in sync with edits and picks up
     /// freshly published diagnostics.
     pub fn tick(&mut self) {
+        self.poll_update_events();
         self.run_pending();
         if !self.lsp.is_enabled() {
             return;
@@ -1816,6 +2185,18 @@ impl App {
 
     /// Handles a left click at a screen cell.
     fn click(&mut self, column: u16, row: u16) -> bool {
+        // The update dialog is modal: a click hits one of its buttons.
+        if self.update.is_dialog_open() {
+            if let Some(button) = self
+                .update_hits
+                .iter()
+                .find(|(rect, _)| rect_contains(*rect, column, row))
+                .map(|(_, button)| *button)
+            {
+                self.run_update_button(button);
+            }
+            return true;
+        }
         // The picker is modal: a click selects, a second click activates.
         if self.picker.is_open() {
             if let Some(index) = self.picker.row_at(column, row) {
@@ -2275,6 +2656,10 @@ impl App {
     }
 
     fn dispatch_key(&mut self, key: KeyEvent) -> bool {
+        // The self-update dialog is modal and outranks everything else.
+        if self.update.is_dialog_open() {
+            return self.handle_update_key(key);
+        }
         if self.show_help {
             self.show_help = false;
             return true;
@@ -2666,6 +3051,8 @@ impl App {
             // a legacy terminal reports Ctrl+M as plain Enter, so Alt+M (which
             // arrives as an ESC-prefixed byte) always reaches us.
             KeyCode::Char('m') if alt => self.open_plugin_manager(),
+            // Alt+U checks GitHub for a newer release (terminal-independent).
+            KeyCode::Char('u') if alt => self.begin_update_check(true),
             KeyCode::F(2) => {
                 self.prompt = Prompt::SaveAs {
                     input: self
@@ -2888,6 +3275,39 @@ fn lsp_enabled() -> bool {
             "0" | "off" | "false" | "no"
         ),
         Err(_) => true,
+    }
+}
+
+/// `FAST_TEXT_UPDATE_CHECK=0` (or off/false/no) forces update checks off,
+/// whatever `config.toml` says.
+fn env_update_checks_enabled() -> bool {
+    match std::env::var("FAST_TEXT_UPDATE_CHECK") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        ),
+        Err(_) => true,
+    }
+}
+
+/// Runs `f` on a background thread. A no-op under `cfg(test)`, so unit tests
+/// never reach for the network or spawn installer processes.
+fn spawn_worker(f: impl FnOnce() + Send + 'static) {
+    #[cfg(not(test))]
+    std::thread::spawn(f);
+    #[cfg(test)]
+    let _ = f;
+}
+
+/// Starts a new editor process from the current executable and its arguments.
+fn spawn_restarted_editor() -> std::io::Result<()> {
+    #[cfg(test)]
+    return Ok(());
+    #[cfg(not(test))]
+    {
+        let mut command = fast_text_update::restart_command()?;
+        command.spawn()?;
+        Ok(())
     }
 }
 
@@ -4096,12 +4516,198 @@ mod tests {
             "Stop recording",
             "Replay macro",
             "Save macro…",
+            "Check for updates",
         ] {
             assert!(
                 titles.contains(&expected.to_string()),
                 "missing command: {expected}"
             );
         }
+    }
+
+    /// An app whose update record is pointed at a throwaway directory, so
+    /// tests never touch the real `~/.config/fast-text`.
+    fn update_test_app() -> (App, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("fast-text-tui-update-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let record = dir.join("update-record");
+        let mut app = empty_app();
+        app.update_checks_enabled = true;
+        app.update_record_path = Some(record.clone());
+        (app, record)
+    }
+
+    #[test]
+    fn alt_u_checks_and_offers_a_newer_release() {
+        let (mut app, record) = update_test_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::ALT));
+        assert_eq!(app.update, UpdateState::Checking);
+
+        // The worker's answer arrives on the next tick.
+        app.apply_update_event(UpdateEvent::Checked {
+            manual: true,
+            result: Ok(Some(Release::from_tag("v9.9.9"))),
+        });
+        assert_eq!(
+            app.update,
+            UpdateState::Available {
+                tag: "v9.9.9".to_string()
+            }
+        );
+
+        // "No" closes the dialog and remembers the declined tag.
+        app.handle_key(key(KeyCode::Char('n')));
+        assert_eq!(app.update, UpdateState::Idle);
+        let saved = fast_text_update::load_record(&record);
+        assert_eq!(saved.declined.as_deref(), Some("v9.9.9"));
+    }
+
+    #[test]
+    fn accepting_an_update_installs_then_offers_a_restart() {
+        let (mut app, _record) = update_test_app();
+        let alt_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::ALT);
+        app.handle_key(alt_u); // manual check
+        app.apply_update_event(UpdateEvent::Checked {
+            manual: true,
+            result: Ok(Some(Release::from_tag("v9.9.9"))),
+        });
+        app.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(app.update, UpdateState::Installing { .. }));
+
+        app.apply_update_event(UpdateEvent::Progress("Unpacking…".to_string()));
+        match &app.update {
+            UpdateState::Installing { progress, .. } => assert_eq!(progress, "Unpacking…"),
+            other => panic!("unexpected state: {other:?}"),
+        }
+
+        app.apply_update_event(UpdateEvent::Installed {
+            tag: "v9.9.9".to_string(),
+            result: Ok(vec!["fast-text".to_string()]),
+        });
+        assert_eq!(
+            app.update,
+            UpdateState::ReadyToRestart {
+                tag: "v9.9.9".to_string()
+            }
+        );
+
+        // Restarting quits this instance (no process is spawned under test).
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn a_failed_install_shows_the_error_and_closes_on_a_key() {
+        let (mut app, _record) = update_test_app();
+        app.apply_update_event(UpdateEvent::Installed {
+            tag: "v9.9.9".to_string(),
+            result: Err("the download failed".to_string()),
+        });
+        match &app.update {
+            UpdateState::Failed { error, .. } => assert!(error.contains("download failed")),
+            other => panic!("unexpected state: {other:?}"),
+        }
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.update, UpdateState::Idle);
+    }
+
+    #[test]
+    fn an_up_to_date_manual_check_reports_so_quietly() {
+        let (mut app, _record) = update_test_app();
+        app.apply_update_event(UpdateEvent::Checked {
+            manual: true,
+            result: Ok(None),
+        });
+        assert_eq!(app.update, UpdateState::Idle);
+        assert!(app.message.is_some(), "a manual check should say something");
+    }
+
+    #[test]
+    fn a_release_equal_to_this_build_is_not_offered() {
+        let (mut app, _record) = update_test_app();
+        app.apply_update_event(UpdateEvent::Checked {
+            manual: true,
+            result: Ok(Some(Release::from_tag(env!("CARGO_PKG_VERSION")))),
+        });
+        assert_eq!(
+            app.update,
+            UpdateState::Idle,
+            "the release already installed must not be offered"
+        );
+        assert!(
+            app.message
+                .as_deref()
+                .is_some_and(|m| m.contains("up to date")),
+            "a manual check should say it is up to date"
+        );
+    }
+
+    #[test]
+    fn a_recent_automatic_check_is_throttled_but_manual_ones_are_not() {
+        let (mut app, record) = update_test_app();
+        fast_text_update::save_record(
+            &record,
+            &fast_text_update::CheckRecord {
+                last_check: Some(fast_text_update::now_secs()),
+                latest: Some("v9.9.9".to_string()),
+                declined: Some("v9.9.9".to_string()),
+            },
+        )
+        .unwrap();
+
+        app.begin_update_check(false);
+        assert_eq!(
+            app.update,
+            UpdateState::Idle,
+            "a fresh record must throttle"
+        );
+
+        app.begin_update_check(true);
+        assert_eq!(
+            app.update,
+            UpdateState::Checking,
+            "manual checks always run"
+        );
+
+        // A release the user said no to stays quiet on the next day's check.
+        fast_text_update::save_record(
+            &record,
+            &fast_text_update::CheckRecord {
+                last_check: Some(fast_text_update::now_secs() - 2 * 24 * 60 * 60),
+                latest: Some("v9.9.9".to_string()),
+                declined: Some("v9.9.9".to_string()),
+            },
+        )
+        .unwrap();
+        app.update = UpdateState::Idle;
+        app.begin_update_check(false);
+        assert_eq!(
+            app.update,
+            UpdateState::Idle,
+            "a declined release must not be offered again"
+        );
+    }
+
+    #[test]
+    fn update_checks_can_be_switched_off() {
+        let (mut app, _record) = update_test_app();
+        app.update_checks_enabled = false;
+        app.begin_update_check(true);
+        assert_eq!(app.update, UpdateState::Idle);
+        assert!(
+            app.is_error,
+            "a manual check with checks off should explain"
+        );
+    }
+
+    #[test]
+    fn the_check_updates_command_is_registered() {
+        let (mut app, _record) = update_test_app();
+        assert!(app.run_command_id("check_updates"));
+        app.update = UpdateState::Idle;
+        assert!(app.run_builtin_command("Check for updates"));
     }
 
     #[test]

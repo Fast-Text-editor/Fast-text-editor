@@ -54,7 +54,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxi-dev \
             libgl1-mesa-dev libxcursor-dev libxrandr-dev libxinerama-dev
-      - run: cargo test -p fast-text-core -p fast-text-syntax -p fast-text-lsp -p fast-text-plugin -p fast-text-textwrite -p textwrite -p fast-text-tui -p fast-text-gui
+      - run: cargo test -p fast-text-core -p fast-text-syntax -p fast-text-lsp -p fast-text-plugin -p fast-text-textwrite -p textwrite -p fast-text-update -p fast-text-tui -p fast-text-gui
 
   install-script:
     name: install.sh syntax
@@ -64,6 +64,27 @@ jobs:
       - run: sh -n install.sh
       - run: sh install.sh --help
       - run: sh install.sh --dry-run --from-source
+      - name: Version check finds an update (offline)
+        run: |
+          prefix="$(mktemp -d)"
+          mkdir -p "$prefix/share/fast-text"
+          printf '0.1.0\n' >"$prefix/share/fast-text/installed-version"
+          out="$(FAST_TEXT_LATEST_TAG=v9.9.9 sh install.sh --check --prefix "$prefix" 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "Update available"
+      - name: Version check reports up to date (offline)
+        run: |
+          prefix="$(mktemp -d)"
+          mkdir -p "$prefix/share/fast-text"
+          printf '0.1.0\n' >"$prefix/share/fast-text/installed-version"
+          FAST_TEXT_LATEST_TAG=v0.1.0 sh install.sh --check --prefix "$prefix" 2>&1 | grep -q "up to date"
+      - name: Update dry run follows the newest tag (offline)
+        run: |
+          prefix="$(mktemp -d)"
+          mkdir -p "$prefix/share/fast-text"
+          printf '0.1.0\n' >"$prefix/share/fast-text/installed-version"
+          FAST_TEXT_LATEST_TAG=v0.2.0 sh install.sh --update --dry-run --prefix "$prefix" 2>&1 |
+            grep -q "Updating from v0.1.0 to v0.2.0"
 
   install-script-windows:
     name: install.ps1 syntax
@@ -82,3 +103,23 @@ jobs:
           }
       - run: pwsh -NoProfile -File ./install.ps1 -Help
       - run: pwsh -NoProfile -File ./install.ps1 -DryRun -FromSource
+      - name: Version check and update (offline)
+        shell: pwsh
+        run: |
+          $prefix = Join-Path ([System.IO.Path]::GetTempPath()) ("ft-check-" + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+          Set-Content -Path (Join-Path $prefix 'installed-version.txt') -Value '0.1.0'
+
+          $env:FAST_TEXT_LATEST_TAG = 'v9.9.9'
+          $out = (& ./install.ps1 -Check -Prefix $prefix 2>&1 | Out-String)
+          Write-Output $out
+          if ($out -notmatch 'Update available') { Write-Error 'expected an update notice'; exit 1 }
+
+          $env:FAST_TEXT_LATEST_TAG = 'v0.1.0'
+          $out = (& ./install.ps1 -Check -Prefix $prefix 2>&1 | Out-String)
+          if ($out -notmatch 'up to date') { Write-Error 'expected an up-to-date notice'; exit 1 }
+
+          $env:FAST_TEXT_LATEST_TAG = 'v0.2.0'
+          $out = (& ./install.ps1 -Update -DryRun -Prefix $prefix 2>&1 | Out-String)
+          Write-Output $out
+          if ($out -notmatch 'Updating from v0\.1\.0 to v0\.2\.0') { Write-Error 'expected an update plan'; exit 1 }

@@ -163,6 +163,11 @@ fn event_loop(
     // `--config` wins; otherwise the usual XDG location.
     let config = Config::load_from(config_path.or_else(Config::path));
     let mut app = App::with_config(files, config);
+    // Clear out the `.old` twins a previous self-update left behind, then ask
+    // GitHub about newer releases in the background (throttled to once a day,
+    // and off when `check_updates = false` / `FAST_TEXT_UPDATE_CHECK=0`).
+    fast_text_update::cleanup_old_binaries();
+    app.begin_update_check(false);
     let mut applied_cursor: Option<CursorStyle> = None;
 
     loop {

@@ -98,6 +98,8 @@ curl -fsSL https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/m
 | `--version TAG` | Install a specific release tag |
 | `--no-completions` | Do not install shell completions |
 | `--uninstall` | Remove everything a previous run installed |
+| `--check` | Compare the installed version with the newest release |
+| `--update` | Install the newest release over the current install |
 | `--dry-run` | Print what would happen and change nothing |
 
 It installs `fast-text` / `ft`, `textwrite` / `tw`, and bash and zsh
@@ -109,6 +111,37 @@ Prebuilt archives are published for **x86_64 and aarch64 Linux** (glibc) and
 **x86_64 and aarch64 macOS**; every other platform builds from source
 automatically. Releases are produced by `.github/workflows/release.yml` when a
 `v*` tag is pushed.
+
+## Updates
+
+Fast Text knows when a newer release exists. At startup it asks GitHub once a
+day (in the background, so it never blocks the editor) and, when something
+newer is out, opens a small window naming the version with **Yes, update** and
+**Not now** buttons. `Yes` downloads the release, unpacks it, swaps the
+executables in place and then offers to restart; the editor itself never
+re-execs without asking. `Alt+U` (or *Check for updates* in `Ctrl+P`)
+checks on demand, and the version you are running is shown in the status bar.
+
+```toml
+[editor]
+check_updates = true   # set to false to never check
+```
+
+Setting `FAST_TEXT_UPDATE_CHECK=0` disables checking whatever the config says.
+A release you answer "Not now" to is not offered again until an even newer one
+appears. On platforms without a prebuilt archive the check still runs but
+reports that you should rebuild from source.
+
+The installer can do the same from the shell:
+
+```sh
+sh install.sh --check     # "Update available: v0.1.0 … v0.2.0"
+sh install.sh --update    # install the newest release in place
+```
+
+`install.ps1` on Windows takes `-Check` and `-Update`. Both record the
+installed version in `PREFIX/share/fast-text/installed-version`, and the
+desktop app has the same dialog under **Help → Check for updates**.
 
 ## Keys
 
@@ -132,7 +165,7 @@ automatically. Releases are produced by `.github/workflows/release.yml` when a
 | `Ctrl+Shift+I` | Format document | `Ctrl+.` | Code actions |
 | `Ctrl+/` | Toggle comment | `Ctrl+Shift+D` | Duplicate line |
 | `Ctrl+Shift+K` | Delete line | `Alt+↑` / `Alt+↓` | Move line up / down |
-| `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro |
+| `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro | `Alt+U` | Check for updates |
 
 A few chords are terminal-dependent (`Ctrl+Shift+<letter>`, `Ctrl+.`). Every
 action also has a palette entry and a `[keys]` id, so you can rebind it — for
@@ -178,6 +211,7 @@ cursor_style = "bar"      # bar | block | underline
 theme        = "dark"     # dark | light
 sidebar      = false      # start with the folder explorer visible
 lsp          = true       # talk to language servers (as FAST_TEXT_LSP)
+check_updates = true      # look for a newer release at startup (as Alt+U)
 
 [sidebar]
 hidden = false            # list dot-files
@@ -208,7 +242,7 @@ help, next_tab, prev_tab, reload_config, open_config,
 find_in_files, document_symbols, rename_symbol, format_document,
 code_actions, toggle_comment, duplicate_line, delete_line, move_line_up,
 move_line_down, select_next_occurrence, record_macro, replay_macro,
-save_macro
+save_macro, check_updates
 ```
 
 A named macro can also be bound with the id `macro_<name>`.

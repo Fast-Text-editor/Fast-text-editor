@@ -101,6 +101,11 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     if app.plugin_manager.is_open() {
         draw_plugin_manager(app, frame, area);
     }
+
+    // The self-update modal sits on top of everything.
+    if app.update.is_dialog_open() {
+        draw_update_dialog(app, frame, area);
+    }
 }
 
 /// Width of the explorer column, kept reasonable on narrow terminals.
@@ -720,7 +725,7 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
         String::new()
     };
 
-    let left = format!(" {}{}", ed.title(), dirty);
+    let left = format!(" {}{}  v{}", ed.title(), dirty, env!("CARGO_PKG_VERSION"));
     let lang = format!("{} ", ed.language.name());
     let encoding = if ed.doc.buffer().is_read_only() {
         "RO"
@@ -841,6 +846,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+Tab  Next tab    Ctrl+W  Close tab"),
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),
+        Line::from(" Alt+U  Check for updates"),
         Line::from(" Shift+Arrows  Select  Ctrl+←/→  Word move"),
         Line::from(" Alt+↑/↓  Move line   Alt+Shift+↑/↓  Add cursors"),
         Line::from(" Ctrl+D  Select next occurrence"),
@@ -876,6 +882,141 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
             ),
         popup,
     );
+}
+
+/// The self-update modal: offers a new release, shows install progress,
+/// offers a restart, or reports a failure.
+fn draw_update_dialog(app: &mut App, frame: &mut Frame, area: Rect) {
+    use crate::app::{UpdateButton, UpdateState};
+
+    let version = env!("CARGO_PKG_VERSION");
+    let (title, body, buttons): (
+        String,
+        Vec<Line<'static>>,
+        Vec<(&'static str, UpdateButton)>,
+    ) = match app.update.clone() {
+        UpdateState::Checking => (
+            " Update check ".to_string(),
+            vec![
+                Line::from(format!(" Checking for a newer Fast Text (v{version})…")),
+                Line::from(""),
+                Line::from(" Press Esc to keep working; the result appears here."),
+            ],
+            vec![],
+        ),
+        UpdateState::Available { tag } => (
+            " Update available ".to_string(),
+            vec![
+                Line::from(format!(" Fast Text {tag} has been released.")),
+                Line::from(format!(" You are running v{version}.")),
+                Line::from(""),
+                Line::from(" Download and install it now?"),
+            ],
+            vec![
+                ("Yes, update", UpdateButton::Yes),
+                ("Not now", UpdateButton::No),
+            ],
+        ),
+        UpdateState::Installing { tag, progress } => (
+            format!(" Installing {tag} "),
+            vec![
+                Line::from(format!(" {progress}")),
+                Line::from(""),
+                Line::from(" Keep this window open until it finishes."),
+            ],
+            vec![],
+        ),
+        UpdateState::ReadyToRestart { tag } => (
+            " Update installed ".to_string(),
+            vec![
+                Line::from(format!(" Fast Text {tag} is installed.")),
+                Line::from(""),
+                Line::from(" Restart now to start using it."),
+            ],
+            vec![
+                ("Restart now", UpdateButton::Restart),
+                ("Later", UpdateButton::Later),
+            ],
+        ),
+        UpdateState::Failed { tag, error } => {
+            let headline = match &tag {
+                Some(tag) => format!(" Fast Text {tag} could not be installed."),
+                None => " The update check did not work.".to_string(),
+            };
+            (
+                " Update failed ".to_string(),
+                vec![
+                    Line::from(headline),
+                    Line::from(""),
+                    Line::from(format!(" {error}")),
+                ],
+                vec![("Close", UpdateButton::Close)],
+            )
+        }
+        UpdateState::Idle => return,
+    };
+
+    let popup = centered_rect(64, 32, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.status_accent))
+        .style(Style::default().bg(app.theme.status_bg))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.status_accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(body).style(
+            Style::default()
+                .bg(app.theme.status_bg)
+                .fg(app.theme.foreground),
+        ),
+        rows[0],
+    );
+
+    // The button row is redrawn every frame; clicks hit-test against it.
+    app.update_hits.clear();
+    let row = rows[1];
+    let mut x = row.x;
+    for (label, button) in buttons {
+        let text = format!("[ {label} ]");
+        let width = UnicodeWidthStr::width(text.as_str()) as u16;
+        if width == 0 || x + width > row.x + row.width {
+            break;
+        }
+        let rect = Rect {
+            x,
+            y: row.y,
+            width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text,
+                Style::default()
+                    .bg(app.theme.status_bg)
+                    .fg(app.theme.status_accent)
+                    .add_modifier(Modifier::BOLD),
+            ))),
+            rect,
+        );
+        app.update_hits.push((rect, button));
+        x += width + 1;
+    }
 }
 
 /// The centred list overlay: symbols, code actions, find-in-files results.
@@ -1273,6 +1414,36 @@ mod tests {
         assert!(out.contains("Welcome to Fast Text"), "output was:\n{out}");
         assert!(out.contains("untitled"));
         assert!(out.contains("Ln 1, Col 1"));
+    }
+
+    #[test]
+    fn renders_the_update_dialog() {
+        use crate::app::{UpdateButton, UpdateState};
+        let mut app = App::new(vec![]);
+        app.update = UpdateState::Available {
+            tag: "v9.9.9".to_string(),
+        };
+        let out = render(&mut app, 80, 24);
+        assert!(out.contains("Update available"), "output was:\n{out}");
+        assert!(out.contains("v9.9.9"), "output was:\n{out}");
+        assert!(out.contains("Yes, update"), "output was:\n{out}");
+        // The buttons are recorded as click targets for `App::handle_mouse`.
+        assert!(
+            app.update_hits
+                .iter()
+                .any(|(_, button)| *button == UpdateButton::Yes),
+            "no Yes button was registered"
+        );
+    }
+
+    #[test]
+    fn the_status_bar_shows_the_version() {
+        let mut app = App::new(vec![]);
+        let out = render(&mut app, 80, 24);
+        assert!(
+            out.contains(env!("CARGO_PKG_VERSION")),
+            "output was:\n{out}"
+        );
     }
 
     #[test]

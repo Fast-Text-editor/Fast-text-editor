@@ -33,5 +33,6 @@ fast-text-lsp = { path = "../fast-text-lsp" }
 fast-text-plugin = { path = "../fast-text-plugin" }
 fast-text-syntax = { path = "../fast-text-syntax" }
 fast-text-textwrite = { path = "../fast-text-textwrite" }
+fast-text-update.workspace = true
 ratatui = "0.30.2"
 unicode-width.workspace = true

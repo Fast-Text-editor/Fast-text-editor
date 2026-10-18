@@ -9,6 +9,7 @@ members = [
     "crates/fast-text-gui",
     "crates/fast-text-tui",
     "crates/fast-text-textwrite",
+    "crates/fast-text-update",
     "crates/textwrite",
 ]
 
@@ -28,6 +29,7 @@ categories = ["command-line-utilities", "text-editors", "development-tools"]
 [workspace.dependencies]
 fast-text-core = { path = "crates/fast-text-core" }
 fast-text-syntax = { path = "crates/fast-text-syntax" }
+fast-text-update = { path = "crates/fast-text-update" }
 
 ropey = "1.6"
 unicode-segmentation = "1.11"

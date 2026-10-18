@@ -45,6 +45,10 @@ param(
     [switch]$AddToPath,
     # Remove everything a previous run installed.
     [switch]$Uninstall,
+    # Compare the installed version with the newest release and print advice.
+    [switch]$Check,
+    # Install the newest release over the current install.
+    [switch]$Update,
     # Accepted for symmetry with install.sh; the installer never prompts.
     [switch]$Yes,
     # Print what would happen and change nothing.
@@ -61,6 +65,7 @@ $GuiBinary = 'fast-text-gui'
 
 $ErrorActionPreference = 'Stop'
 $script:Manifest = @()
+$script:UpToDate = $false
 
 # --------------------------------------------------------------------------
 # Output helpers
@@ -113,12 +118,17 @@ Options:
   -NoCompletions       Do not install the tab-completion script
   -AddToPath           Add the bin directory to your user PATH
   -Uninstall           Remove everything a previous run installed
+  -Check               Compare the installed version with the newest release
+                       and print what to do next
+  -Update              Install the newest release over the current install
   -DryRun              Print what would happen and change nothing
   -Yes                 Accepted for symmetry with install.sh (never prompts)
   -h, -Help            Show this help
 
 Environment:
   FAST_TEXT_VERSION, FAST_TEXT_TARGET   behave like the options above
+  FAST_TEXT_LATEST_TAG                  treat this as the newest release,
+                                        skipping the GitHub query (for tests)
 
 Examples:
   iwr -useb .../install.ps1 | iex
@@ -171,7 +181,7 @@ function Resolve-Dirs {
         $script:BinDir = Join-Path $script:Prefix 'bin'
     }
     $script:ManifestPath = Join-Path $script:Prefix 'installed-files.txt'
-    $verb = if ($Uninstall) { 'Removing from' } else { 'Installing into' }
+    $verb = if ($Uninstall) { 'Removing from' } elseif ($Check) { 'Looking at' } else { 'Installing into' }
     Write-Log "$verb $($script:BinDir)"
 }
 
@@ -388,7 +398,8 @@ Register-ArgumentCompleter -CommandName fast-text, ft, textwrite, tw -ScriptBloc
     $flags = @(
         '-c', '--config', '-h', '--help', '-V', '--version',
         '-Prefix', '-BinDir', '-Version', '-Source', '-FromSource', '-Gui',
-        '-NoCompletions', '-AddToPath', '-Uninstall', '-DryRun', '-Yes'
+        '-NoCompletions', '-AddToPath', '-Uninstall', '-Check', '-Update',
+        '-DryRun', '-Yes'
     )
     $flags |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -463,6 +474,7 @@ function Invoke-Uninstall {
         foreach ($name in ($Binaries + $GuiBinary)) {
             $files += Join-Path $script:BinDir "$name.exe"
         }
+        $files += Get-VersionFilePath
     }
 
     foreach ($file in $files) {
@@ -500,6 +512,144 @@ function Get-ConfigPath {
 }
 
 # --------------------------------------------------------------------------
+# Version checks and updates
+# --------------------------------------------------------------------------
+
+# Where the installed version is recorded. It is listed in the manifest, so
+# -Uninstall removes it with the executables.
+function Get-VersionFilePath {
+    return (Join-Path $script:Prefix 'installed-version.txt')
+}
+
+# The version a previous install recorded, or $null when there is none.
+function Get-InstalledVersion {
+    $file = Get-VersionFilePath
+    if (-not (Test-Path $file)) { return $null }
+    $line = Get-Content -Path $file -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($line) { return ([string]$line).Trim() }
+    return $null
+}
+
+# Returns 1 when $A is newer than $B, -1 when older, 0 when equal.
+function Compare-Version([string]$A, [string]$B) {
+    $pa = @(($A.TrimStart('v', 'V') -split '\.') | ForEach-Object {
+            if ($_ -match '^\d+') { [int]$Matches[0] } else { 0 }
+        })
+    $pb = @(($B.TrimStart('v', 'V') -split '\.') | ForEach-Object {
+            if ($_ -match '^\d+') { [int]$Matches[0] } else { 0 }
+        })
+    for ($i = 0; $i -lt 3; $i++) {
+        $va = if ($i -lt $pa.Count) { $pa[$i] } else { 0 }
+        $vb = if ($i -lt $pb.Count) { $pb[$i] } else { 0 }
+        if ($va -gt $vb) { return 1 }
+        if ($va -lt $vb) { return -1 }
+    }
+    return 0
+}
+
+# The newest release tag, from the GitHub API. FAST_TEXT_LATEST_TAG skips the
+# network query (used by the offline tests).
+function Get-LatestTag {
+    if ($env:FAST_TEXT_LATEST_TAG) { return $env:FAST_TEXT_LATEST_TAG }
+    $url = "https://api.github.com/repos/$Repo/releases/latest"
+    $previous = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        $release = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 20
+    } catch {
+        Fail "could not reach GitHub to check for a newer release: $($_.Exception.Message)"
+    } finally {
+        $ProgressPreference = $previous
+    }
+    if ($release -and $release.tag_name) { return [string]$release.tag_name }
+    Fail 'GitHub did not name a newest release'
+}
+
+# Records which version was installed, so later -Check/-Update runs and the
+# editor's own update check have something to compare against.
+function Write-VersionFile {
+    $file = Get-VersionFilePath
+    $version = $null
+    $exe = Join-Path $script:BinDir "$Program.exe"
+    if (-not $DryRun -and (Test-Path $exe)) {
+        # Ask the freshly installed editor itself — the most reliable source.
+        try {
+            $out = & $exe --version 2>$null
+            if ($out) { $version = ([string]$out).Trim() -replace '^\S+\s+', '' }
+        } catch {
+            $version = $null
+        }
+    }
+    if (-not $version) {
+        try { $version = Get-LatestTag } catch { $version = $null }
+    }
+    if (-not $version) {
+        Warn 'could not work out which version was installed'
+        return
+    }
+    $version = $version.TrimStart('v', 'V')
+    if ($DryRun) {
+        Write-Log "  would record version $version in $file"
+        return
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
+    Set-Content -Path $file -Value $version -Encoding UTF8
+    $script:Manifest += $file
+}
+
+# Prints the installed version and the newest release, plus what to do next.
+function Invoke-Check {
+    $current = Get-InstalledVersion
+    $latest = (Get-LatestTag).TrimStart('v', 'V')
+    if (-not $current) {
+        Write-Log "No Fast Text installation was found under $($script:Prefix)."
+        Write-Log "The newest release is v$latest."
+        Write-Log "Install it with: .\install.ps1 -Version v$latest -Prefix '$($script:Prefix)'"
+        return
+    }
+    $current = $current.TrimStart('v', 'V')
+    if ((Compare-Version $latest $current) -gt 0) {
+        Write-Log "Update available: v$current is installed, v$latest has been released."
+        Write-Log "Install it with: .\install.ps1 -Update -Prefix '$($script:Prefix)'"
+    } else {
+        Write-Log "Fast Text v$current is up to date (newest release: v$latest)."
+    }
+}
+
+# Points $Version at the newest release when an update is actually warranted.
+# Sets $script:UpToDate when there is nothing to do.
+function Invoke-Update {
+    if ($Version -ne 'latest') {
+        Write-Log "Updating to $Version"
+        return
+    }
+    $latest = (Get-LatestTag).TrimStart('v', 'V')
+    $current = Get-InstalledVersion
+    if ($current) { $current = $current.TrimStart('v', 'V') }
+    if ($current -and (Compare-Version $latest $current) -le 0) {
+        Write-Log "Fast Text v$current is already up to date (newest release: v$latest)."
+        $script:UpToDate = $true
+        return
+    }
+    if ($current) {
+        Write-Log "Updating from v$current to v$latest"
+    } else {
+        Write-Log "Installing the newest release, v$latest"
+    }
+    $script:Version = "v$latest"
+
+    # Refresh the desktop app too when an earlier run installed it.
+    if (-not $Gui -and (Test-Path $script:ManifestPath)) {
+        $hasGui = Get-Content -Path $script:ManifestPath -ErrorAction SilentlyContinue |
+            Where-Object { $_ -like "*$GuiBinary*" }
+        if ($hasGui) {
+            $script:Gui = $true
+            Write-Log 'The desktop app was installed before; it will be updated as well'
+        }
+    }
+}
+
+# --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
 
@@ -514,6 +664,16 @@ function main {
     if ($Uninstall) {
         Invoke-Uninstall
         return
+    }
+
+    if ($Check) {
+        Invoke-Check
+        return
+    }
+
+    if ($Update) {
+        Invoke-Update
+        if ($script:UpToDate) { return }
     }
 
     $script:TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("$Program-install-" + [Guid]::NewGuid().ToString('N'))
@@ -544,6 +704,7 @@ function main {
         }
 
         Install-Binaries
+        Write-VersionFile
         if (-not $NoCompletions) { Install-Completions }
         Save-Manifest
         if ($AddToPath) { Add-BinToPath }

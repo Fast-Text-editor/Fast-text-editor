@@ -25,6 +25,9 @@ theme        = "dark"
 sidebar      = false
 # talk to language servers (the same knob as FAST_TEXT_LSP)
 lsp          = true
+# check GitHub for a newer release at startup (the same knob as
+# FAST_TEXT_UPDATE_CHECK=0); Alt+U or "Check for updates" always check
+check_updates = true
 
 [sidebar]
 # list dot-files
@@ -46,7 +49,7 @@ hidden = false
 #   find_in_files, document_symbols, rename_symbol, format_document,
 #   code_actions, toggle_comment, duplicate_line, delete_line, move_line_up,
 #   move_line_down, select_next_occurrence, record_macro, replay_macro,
-#   save_macro
+#   save_macro, check_updates
 #
 # A named macro can also be bound with the id "macro_<name>".
 [keys]
@@ -80,6 +83,8 @@ pub struct Config {
     pub show_hidden: bool,
     /// Talk to language servers.
     pub lsp: bool,
+    /// Check GitHub for a newer release at startup.
+    pub check_updates: bool,
     /// `[keys]` bindings, in file order.
     pub keys: Vec<KeyBinding>,
     /// Problems found while loading; surfaced as a status message.
@@ -98,6 +103,7 @@ impl Default for Config {
             sidebar: false,
             show_hidden: false,
             lsp: true,
+            check_updates: true,
             keys: Vec::new(),
             warnings: Vec::new(),
             path: None,
@@ -227,6 +233,9 @@ impl Config {
                     set_bool(&mut self.sidebar, value, line_no, &mut self.warnings)
                 }
                 "lsp" => set_bool(&mut self.lsp, value, line_no, &mut self.warnings),
+                "check_updates" => {
+                    set_bool(&mut self.check_updates, value, line_no, &mut self.warnings)
+                }
                 _ => self
                     .warnings
                     .push(format!("line {line_no}: unknown setting `editor.{key}`")),
@@ -351,7 +360,20 @@ mod tests {
         assert_eq!(c.cursor_style, CursorStyle::Bar);
         assert!(!c.light_theme);
         assert!(c.lsp);
+        assert!(c.check_updates);
         assert!(c.keys.is_empty());
+    }
+
+    #[test]
+    fn check_updates_can_be_turned_off() {
+        let c = Config::parse(
+            r#"
+            [editor]
+            check_updates = false
+            "#,
+        );
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        assert!(!c.check_updates);
     }
 
     #[test]

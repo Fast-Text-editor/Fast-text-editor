@@ -1316,6 +1316,7 @@ dependencies = [
  "egui",
  "fast-text-core",
  "fast-text-syntax",
+ "fast-text-update",
 ]
 
 [[package]]
@@ -1355,9 +1356,14 @@ dependencies = [
  "fast-text-plugin",
  "fast-text-syntax",
  "fast-text-textwrite",
+ "fast-text-update",
  "ratatui",
  "unicode-width 0.1.14",
 ]
+
+[[package]]
+name = "fast-text-update"
+version = "0.1.0"
 
 [[package]]
 name = "fast-text-wasm"

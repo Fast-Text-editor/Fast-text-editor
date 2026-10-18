@@ -23,6 +23,8 @@ ASSUME_YES=0
 FROM_SOURCE=0
 WITH_GUI=0
 DO_UNINSTALL=0
+DO_CHECK=0
+DO_UPDATE=0
 NO_COMPLETIONS=0
 VERSION="${FAST_TEXT_VERSION:-latest}"
 PREFIX="${PREFIX:-}"
@@ -97,12 +99,17 @@ Options:
                       system GUI development libraries
   --no-completions    Do not install shell completions
   --uninstall         Remove everything a previous run installed
+  --check             Compare the installed version with the newest release
+                      and print what to do next
+  --update            Install the newest release over the current install
   -y, --yes           Do not prompt for confirmation
   --dry-run           Print what would happen and change nothing
   -h, --help          Show this help
 
 Environment:
   PREFIX, BIN_DIR, FAST_TEXT_VERSION   behave like the options above
+  FAST_TEXT_LATEST_TAG                 treat this as the newest release,
+                                       skipping the GitHub query (for tests)
 
 Examples:
   curl -fsSL .../install.sh | sh
@@ -171,6 +178,14 @@ parse_args() {
             DO_UNINSTALL=1
             shift
             ;;
+        --check)
+            DO_CHECK=1
+            shift
+            ;;
+        --update)
+            DO_UPDATE=1
+            shift
+            ;;
         -y | --yes)
             ASSUME_YES=1
             shift
@@ -224,7 +239,8 @@ resolve_dirs() {
     PREFIX="$(abs_path "$PREFIX")"
 
     SUDO=""
-    if [ "$(id -u)" != 0 ] && [ "$DRY_RUN" != 1 ]; then
+    # A version *check* only reads; it never needs elevated rights.
+    if [ "$DO_CHECK" != 1 ] && [ "$(id -u)" != 0 ] && [ "$DRY_RUN" != 1 ]; then
         probe=""
         if [ -d "$BIN_DIR" ]; then
             probe="$BIN_DIR"
@@ -239,6 +255,8 @@ resolve_dirs() {
     fi
     if [ "$DO_UNINSTALL" = 1 ]; then
         verb="Removing from"
+    elif [ "$DO_CHECK" = 1 ]; then
+        verb="Looking at"
     else
         verb="Installing into"
     fi
@@ -553,8 +571,165 @@ uninstall() {
                 log "  removed $BIN_DIR/$name$EXE_SUFFIX"
             fi
         done
+        if [ -e "$(version_file)" ]; then
+            run_priv rm -f "$(version_file)"
+            log "  removed $(version_file)"
+        fi
     fi
     log "Done. Your settings and plugins under ~/.config/fast-text were left alone."
+}
+
+# --------------------------------------------------------------------------
+# Version checks and updates
+# --------------------------------------------------------------------------
+
+# Where the installed version is recorded. It is listed in the manifest, so
+# `--uninstall` removes it along with the executables.
+version_file() {
+    printf '%s/share/%s/installed-version\n' "$PREFIX" "$PROGRAM"
+}
+
+# The version a previous install recorded, if there is a record.
+read_installed_version() {
+    file="$(version_file)"
+    [ -f "$file" ] || return 1
+    head -n 1 "$file"
+}
+
+# True when version $1 is strictly newer than version $2. Plain numeric
+# comparison, so it works without GNU `sort -V` (absent on macOS and the BSDs).
+version_gt() {
+    a="${1#v}"
+    b="${2#v}"
+    while :; do
+        an="${a%%.*}"
+        bn="${b%%.*}"
+        an="$(printf '%s' "$an" | tr -cd '0-9')"
+        bn="$(printf '%s' "$bn" | tr -cd '0-9')"
+        if [ -z "$an" ]; then an=0; fi
+        if [ -z "$bn" ]; then bn=0; fi
+        if [ "$an" -gt "$bn" ]; then return 0; fi
+        if [ "$an" -lt "$bn" ]; then return 1; fi
+        case "$a" in
+        *.*) a="${a#*.}" ;;
+        *) a="" ;;
+        esac
+        case "$b" in
+        *.*) b="${b#*.}" ;;
+        *) b="" ;;
+        esac
+        if [ -z "$a" ] && [ -z "$b" ]; then
+            return 1
+        fi
+        if [ -z "$a" ]; then a=0; fi
+        if [ -z "$b" ]; then b=0; fi
+    done
+}
+
+# The newest release tag, straight from the GitHub API. Setting
+# FAST_TEXT_LATEST_TAG skips the network query — the tests rely on that.
+latest_tag() {
+    if [ -n "${FAST_TEXT_LATEST_TAG:-}" ]; then
+        printf '%s\n' "$FAST_TEXT_LATEST_TAG"
+        return 0
+    fi
+    json=""
+    if command -v curl >/dev/null 2>&1; then
+        json="$(curl -fsSL --max-time 20 \
+            "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null)" || return 1
+    elif command -v wget >/dev/null 2>&1; then
+        json="$(wget -q -O - --timeout=20 \
+            "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null)" || return 1
+    else
+        return 1
+    fi
+    tag="$(printf '%s' "$json" |
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        head -n 1)"
+    [ -n "$tag" ] || return 1
+    printf '%s\n' "$tag"
+}
+
+# Records which version was installed, so later `--check`/`--update` runs and
+# the editor's own Alt+U check have something to compare against.
+write_version_file() {
+    file="$(version_file)"
+    version=""
+    exe="$BIN_DIR/$PROGRAM$EXE_SUFFIX"
+    if [ "$DRY_RUN" != 1 ] && [ -x "$exe" ]; then
+        # Ask the freshly installed editor itself — the most reliable source.
+        version="$("$exe" --version 2>/dev/null |
+            sed -n 's/^[^ ]*[[:space:]]*//p' | head -n 1)" || version=""
+    fi
+    if [ -z "$version" ]; then
+        version="$(latest_tag 2>/dev/null || printf '')"
+    fi
+    version="${version#v}"
+    if [ -z "$version" ]; then
+        warn "could not work out which version was installed"
+        return 0
+    fi
+    if [ "$DRY_RUN" = 1 ]; then
+        log "  would record version $version in $file"
+        return 0
+    fi
+    printf '%s\n' "$version" >"$TMP_DIR/version"
+    run_priv mkdir -p "$(dirname "$file")"
+    run_priv cp "$TMP_DIR/version" "$file"
+    printf '%s\n' "$file" >>"$TMP_DIR/manifest"
+}
+
+# Prints the installed version and the newest release, plus what to do next.
+check_update() {
+    installed="$(read_installed_version)" || installed=""
+    if ! latest="$(latest_tag)"; then
+        die "could not reach GitHub to check for a newer release"
+    fi
+    latest="${latest#v}"
+    if [ -z "$installed" ]; then
+        log "No Fast Text installation was found under $PREFIX."
+        log "The newest release is v$latest."
+        log "Install it with: sh install.sh --version v$latest --prefix $PREFIX"
+        return 0
+    fi
+    installed="${installed#v}"
+    if version_gt "$latest" "$installed"; then
+        log "Update available: v$installed is installed, v$latest has been released."
+        log "Install it with: sh install.sh --update --prefix $PREFIX"
+    else
+        log "Fast Text v$installed is up to date (newest release: v$latest)."
+    fi
+}
+
+# Points VERSION at the newest release when an update is actually warranted.
+update_now() {
+    if [ "$VERSION" != "latest" ]; then
+        log "Updating to $VERSION"
+        return 0
+    fi
+    installed="$(read_installed_version)" || installed=""
+    if ! latest="$(latest_tag)"; then
+        die "could not reach GitHub to find the newest release"
+    fi
+    latest="${latest#v}"
+    if [ -n "$installed" ] && ! version_gt "$latest" "${installed#v}"; then
+        log "Fast Text v${installed#v} is already up to date (newest release: v$latest)."
+        exit 0
+    fi
+    if [ -n "$installed" ]; then
+        log "Updating from v${installed#v} to v$latest"
+    else
+        log "Installing the newest release, v$latest"
+    fi
+    VERSION="v$latest"
+
+    # Refresh the desktop app too when an earlier run installed it.
+    manifest="$PREFIX/share/$PROGRAM/installed-files"
+    if [ "$WITH_GUI" != 1 ] && [ -f "$manifest" ] &&
+        grep -q "/$GUI_BINARY" "$manifest" 2>/dev/null; then
+        WITH_GUI=1
+        log "The desktop app was installed before; it will be updated as well"
+    fi
 }
 
 # --------------------------------------------------------------------------
@@ -568,6 +743,15 @@ main() {
     if [ "$DO_UNINSTALL" = 1 ]; then
         uninstall
         exit 0
+    fi
+
+    if [ "$DO_CHECK" = 1 ]; then
+        check_update
+        exit 0
+    fi
+
+    if [ "$DO_UPDATE" = 1 ]; then
+        update_now
     fi
 
     TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fast-text-install.XXXXXX")" ||
@@ -596,6 +780,7 @@ main() {
     fi
 
     install_binaries
+    write_version_file
     if [ "$NO_COMPLETIONS" != 1 ]; then
         install_completions
     fi
