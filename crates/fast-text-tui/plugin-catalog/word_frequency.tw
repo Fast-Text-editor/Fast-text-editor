@@ -1,0 +1,182 @@
+# Word frequency analysis for Fast Text — a TextWrite plugin.
+#
+# Counts the words in the selection (or the whole document) and reports the
+# most frequent ones, their density, and a quick readability estimate. The
+# report is shown as a message or inserted as a comment block, which is
+# handy for checking prose, commit messages and documentation.
+
+# Words shorter than this are skipped by default.
+let freq_min_length = 3
+# How many top words the report lists.
+let freq_top_n = 10
+
+# A stop-word list: the glue words that drown out the interesting ones.
+let freq_stop = ["the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was", "one", "our", "out", "get", "has", "him", "his", "how", "man", "new", "now", "old", "see", "two", "way", "who", "did", "its", "let", "she", "too", "use", "that", "with", "have", "this", "will", "your", "from", "they", "know", "want", "been", "good", "much", "some", "time", "very", "when", "come", "here", "just", "like", "long", "make", "many", "more", "only", "over", "such", "take", "than", "them", "well", "were", "what", "into", "could", "would", "should", "their", "there", "which", "about", "other", "after", "first", "would"]
+
+fn freq_source() {
+    if has_selection {
+        return selected_text
+    }
+    return document_text
+}
+
+# Counts words into a map: word -> count. Honours the stop list.
+fn freq_counts(text) {
+    let counts = {}
+    for w in words(lower(text)) {
+        # Strip punctuation clinging to the word's edges.
+        # Single quotes: no `{}` interpolation scanning inside.
+        let marks = '.,;:!?\"\'()[]{}<>'
+        let clean = w
+        while len(clean) > 0 and index_of(marks, slice(clean, 0, 1)) >= 0 {
+            clean = slice(clean, 1, len(clean))
+        }
+        while len(clean) > 0 and index_of(marks, slice(clean, len(clean) - 1, len(clean))) >= 0 {
+            clean = slice(clean, 0, len(clean) - 1)
+        }
+        if len(clean) < freq_min_length {
+            continue
+        }
+        if index_of(freq_stop, clean) >= 0 {
+            continue
+        }
+        if has(counts, clean) {
+            counts[clean] = counts[clean] + 1
+        } else {
+            counts[clean] = 1
+        }
+    }
+    return counts
+}
+
+# Turns the count map into sorted [word, count] pairs, most frequent first.
+fn freq_rank(counts) {
+    let pairs = []
+    for k in keys(counts) {
+        push(pairs, [k, counts[k]])
+    }
+    return sort_by(pairs, fn(a, b) {
+        if a[1] > b[1] {
+            return -1
+        }
+        if a[1] < b[1] {
+            return 1
+        }
+        # Tie-break alphabetically so the report is stable.
+        if a[0] < b[0] {
+            return -1
+        }
+        if a[0] > b[0] {
+            return 1
+        }
+        return 0
+    })
+}
+
+fn freq_report() {
+    let text = freq_source()
+    if trim(text) is "" {
+        message("Nothing to analyse")
+        return
+    }
+    let counts = freq_counts(text)
+    let ranked = freq_rank(counts)
+    if len(ranked) is 0 {
+        message("No words of length " + str(freq_min_length) + " or more")
+        return
+    }
+    let total = 0
+    for w in words(text) {
+        total += 1
+    }
+    let parts = []
+    let i = 0
+    let top = freq_top_n
+    if top > len(ranked) {
+        top = len(ranked)
+    }
+    while i < top {
+        push(parts, ranked[i][0] + " ×" + str(ranked[i][1]))
+        i += 1
+    }
+    message(str(len(ranked)) + " distinct words, " + str(total) + " total — top: " + join(parts, ", "))
+}
+command_with_desc("Frequency: report", "Report the most frequent words in the selection or document", "freq_report")
+
+fn freq_insert() {
+    # The same report, but written into the document as a comment block.
+    let text = freq_source()
+    if trim(text) is "" {
+        message("Nothing to analyse")
+        return
+    }
+    let ranked = freq_rank(freq_counts(text))
+    if len(ranked) is 0 {
+        message("No words of length " + str(freq_min_length) + " or more")
+        return
+    }
+    let lines_out = ["// Word frequency"]
+    let i = 0
+    let top = freq_top_n
+    if top > len(ranked) {
+        top = len(ranked)
+    }
+    while i < top {
+        let word = ranked[i][0]
+        let count = ranked[i][1]
+        # A bar whose length is the count, for a quick visual scan.
+        let bar = map(range(count), fn(k) {
+            return "▇"
+        }).join("")
+        push(lines_out, "// " + word + " " + bar + " " + str(count))
+        i += 1
+    }
+    insert(join(lines_out, "\n") + "\n")
+}
+command_with_desc("Frequency: insert chart", "Insert a commented bar chart of the most frequent words", "freq_insert")
+
+fn freq_uniques() {
+    # The words used exactly once — often the most telling ones.
+    let text = freq_source()
+    if trim(text) is "" {
+        message("Nothing to analyse")
+        return
+    }
+    let counts = freq_counts(text)
+    let once = []
+    for k in keys(counts) {
+        if counts[k] is 1 {
+            push(once, k)
+        }
+    }
+    sort(once)
+    if len(once) is 0 {
+        message("No words used exactly once")
+        return
+    }
+    message(str(len(once)) + " unique words: " + join(once, ", "))
+}
+command_with_desc("Frequency: unique words", "List the words that appear exactly once", "freq_uniques")
+
+fn freq_density() {
+    # Average word length and a rough reading-time estimate.
+    let text = freq_source()
+    if trim(text) is "" {
+        message("Nothing to analyse")
+        return
+    }
+    let all = words(text)
+    if len(all) is 0 {
+        message("No words found")
+        return
+    }
+    let chars_total = 0
+    for w in all {
+        chars_total += len(w)
+    }
+    let average = chars_total / len(all)
+    # A generous 200 words per minute for reading aloud.
+    let minutes = (len(all) + 199) / 200
+    message("Average word length " + str(average) + " chars, " + str(len(all)) + " words, ~" + str(minutes) + " min read")
+}
+command_with_desc("Frequency: readability", "Report average word length and an estimated reading time", "freq_density")

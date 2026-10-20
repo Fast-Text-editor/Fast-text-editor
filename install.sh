@@ -403,7 +403,9 @@ build_from_source() {
             src="$(pwd)"
             log "Building from the current checkout"
         else
-            need git
+            # A dry run only prints the plan: it must work on machines that
+            # have neither git nor cargo, and before the clone happens.
+            [ "$DRY_RUN" = 1 ] || need git
             src="$TMP_DIR/src"
             log "Cloning https://github.com/$REPO.git"
             if [ "$VERSION" = "latest" ]; then
@@ -413,9 +415,11 @@ build_from_source() {
             fi
         fi
     fi
-    [ -d "$src" ] || die "source directory '$src' does not exist"
-    [ -f "$src/Cargo.toml" ] || die "'$src' is not a Fast Text checkout"
-    need cargo
+    if [ "$DRY_RUN" != 1 ]; then
+        [ -d "$src" ] || die "source directory '$src' does not exist"
+        [ -f "$src/Cargo.toml" ] || die "'$src' is not a Fast Text checkout"
+        need cargo
+    fi
 
     set -- -p fast-text-tui -p textwrite
     if [ "$WITH_GUI" = 1 ]; then
@@ -620,6 +624,14 @@ uninstall() {
             log "  removed $(version_file)"
         fi
     fi
+    # Manifests written by older releases did not list the version record;
+    # remove it now that the executables are gone. Both calls are no-ops
+    # when the files are already gone.
+    if [ -e "$(version_file)" ]; then
+        run_priv rm -f "$(version_file)"
+        log "  removed $(version_file)"
+    fi
+    run_priv rmdir "$PREFIX/share/$PROGRAM" 2>/dev/null || true
     log "Done. Your settings and plugins under ~/.config/fast-text were left alone."
 }
 
@@ -706,7 +718,14 @@ write_version_file() {
             sed -n 's/^[^ ]*[[:space:]]*//p' | head -n 1)" || version=""
     fi
     if [ -z "$version" ]; then
-        version="$(newest_tag 2>/dev/null || printf '')"
+        # A pinned install must record the version it installed, not the
+        # newest release — otherwise a later --check would wrongly report
+        # "up to date".
+        if [ "$VERSION" != "latest" ]; then
+            version="$VERSION"
+        else
+            version="$(newest_tag 2>/dev/null || printf '')"
+        fi
     fi
     version="${version#v}"
     if [ -z "$version" ]; then
@@ -867,8 +886,13 @@ main() {
 
     TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fast-text-install.XXXXXX")" ||
         die "could not create a temporary directory"
+    # Clean up on any exit. A trap on INT/TERM that only removes the
+    # directory would leave the script running after Ctrl-C, so those
+    # exit first (the EXIT trap then does the cleanup).
     # shellcheck disable=SC2064
-    trap "rm -rf '$TMP_DIR'" EXIT INT TERM
+    trap "rm -rf '$TMP_DIR'" EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 
     if [ "$DRY_RUN" = 1 ]; then
         log "Dry run: nothing will be changed."

@@ -4,6 +4,59 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-20
+
+### Added
+
+- **Top bar** (TUI): a nano-style bar across the top of the window showing
+  `fast-text v<version>` in the accent colour, so the running build is always
+  visible.
+- **Console panel** (TUI): `Alt+C` toggles a VS Code-style console at the
+  bottom of the window. Type any command and press `Enter` to run it with
+  `sh -c`; stdout, stderr and a non-zero exit code are captured under the
+  prompt and up to 1000 lines are kept. `Esc` or `Alt+C` closes it; the panel
+  takes keys from the editor only while it is open, and every modal (update
+  dialog, help, plugin manager, picker, prompt) still outranks it.
+  (The old `Alt+C` *toggle comment* binding moved — commenting stays on
+  `Ctrl+/`.)
+- **New file / new folder in the explorer** (TUI): with the folder explorer
+  open, `n` starts an inline prompt for a **new file** and `N` for a **new
+  folder** next to the highlighted row. Names must be a single path component
+  (no `/`, no `.`/`..`), existing names are rejected with an error, and a file
+  created this way opens immediately. `Esc` cancels.
+- **Six new catalog plugins**, written in TextWrite and bundled with the
+  editor alongside the first six — the plugin manager's *Available* tab now
+  lists twelve: **Comments** (`comments.tw`), **CSV tools** (`csv_tools.tw`),
+  **Markdown extras** (`markdown_extras.tw`), **Date converter**
+  (`date_time.tw`), **Identifier cases** (`identifier_case.tw`) and **Word
+  frequency** (`word_frequency.tw`).
+- Installer CI coverage for the fixes below: git-less/cargo-less dry runs for
+  both installers, pinned-version records, GUI retention on pinned updates and
+  uninstall cleanup.
+
+### Fixed
+
+- `install.sh`: `Ctrl-C` during an install cleaned up the temp directory but
+  did **not** stop the script — the traps now exit (`130`/`143`) and leave the
+  cleanup to `EXIT`.
+- `install.sh`: `--dry-run` demanded `git`, `cargo` and a real checkout before
+  reaching its own dry-run guard, so it died on exactly the machines it is for;
+  it now prints the whole plan instead.
+- `install.sh`: a pinned `--version vX.Y.Z` install whose binary probe failed
+  recorded the *newest* release, so a later `--check`/`--update` wrongly said
+  "up to date"; it now records the version it installed.
+- `install.sh`: `--uninstall` left behind an `installed-version` file that
+  older manifests never listed, plus the emptied `share/fast-text` directory.
+- `install.ps1`: `-DryRun` from a non-checkout actually **cloned the repo**
+  (and required `git`/`cargo`); the clone, the tool checks and the checkout
+  checks are now skipped under `-DryRun`.
+- `install.ps1`: `-Update -Version vX.Y.Z` silently dropped a previously
+  installed GUI app that `install.sh` kept — it now consults the manifest like
+  the shell installer does.
+- `install.ps1`: `-Version` could never be seen by `Write-VersionFile` — the
+  local `$version = $null` wiped the script's `$Version` parameter (PowerShell
+  names are case-insensitive), so pinned installs recorded the wrong version.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added
@@ -100,6 +153,7 @@ The first public release.
 - **Releases**: GitHub Actions builds `fast-text-<target>.tar.gz` for Linux and
   macOS (x86_64 and aarch64) on every `v*` tag.
 
-[Unreleased]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Fast-Text-editor/Fast-text-editor/releases/tag/v0.1.0

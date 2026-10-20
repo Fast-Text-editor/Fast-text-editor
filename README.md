@@ -145,7 +145,7 @@ The installer can do the same from the shell:
 
 ```sh
 sh install.sh           # notices an existing install and upgrades it
-sh install.sh --check     # "Update available: v0.1.0 … v0.2.0"
+sh install.sh --check     # "Update available: v0.2.0 … v0.3.0"
 sh install.sh --update    # install the newest release in place
 ```
 
@@ -175,7 +175,8 @@ desktop app has the same dialog under **Help → Check for updates**.
 | `Ctrl+Shift+I` | Format document | `Ctrl+.` | Code actions |
 | `Ctrl+/` | Toggle comment | `Ctrl+Shift+D` | Duplicate line |
 | `Ctrl+Shift+K` | Delete line | `Alt+↑` / `Alt+↓` | Move line up / down |
-| `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro | `Alt+U` | Check for updates |
+| `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro |
+| `Alt+U` | Check for updates | `Alt+C` | Console panel |
 
 A few chords are terminal-dependent (`Ctrl+Shift+<letter>`, `Ctrl+.`). Every
 action also has a palette entry and a `[keys]` id, so you can rebind it — for
@@ -189,9 +190,16 @@ example `"alt+shift+f" = "find_in_files"`.
 `Ctrl+B` shows a Visual-Studio-style **folder explorer** along the left edge,
 rooted at the folder you launched from (or `Ctrl+Shift+O` to pick another).
 `↑`/`↓` move, `→` expands or steps in, `←` collapses or steps out, `Enter`
-opens a file, `r` reloads, and `.` toggles dotfiles. With the mouse you can
-click a file to open it, click a tab to switch, and click a tab's `✕` to close
-it.
+opens a file, `n` creates a **new file** and `N` a **new folder** next to the
+highlighted row (an inline prompt at the panel's foot asks for a plain name —
+no slashes or dot-names — and opens the file you just made), `r` reloads, and
+`.` toggles dotfiles. With the mouse you can click a file to open it, click a
+tab to switch, and click a tab's `✕` to close it.
+
+`Alt+C` opens a **console panel** at the bottom of the window: type any shell
+command and press `Enter` to run it with `sh -c`, with its output and exit code
+captured below the prompt (up to 1000 lines). `Esc` or `Alt+C` closes the panel
+and returns to the editor.
 
 `Ctrl+Shift+F` (or `Alt+F`) opens **find in files**: type a query, `Tab` toggles
 case sensitivity, and `Enter` on a result jumps straight to the hit. Search runs
@@ -389,9 +397,13 @@ Toggling a plugin takes effect immediately and is remembered in
 also reachable with the mouse: click a row to select it, then click it again to
 toggle (or install) it.
 
-The catalog ships six plugins, all written in TextWrite and readable under
+The catalog ships twelve plugins, all written in TextWrite and readable under
 `crates/fast-text-tui/plugin-catalog/`: **Theme pack**, **Case and lines**,
-**Statistics**, **Markdown pro**, **Whitespace**, and **Snippets**.
+**Statistics**, **Markdown pro**, **Whitespace**, **Snippets**, **Comments**
+(toggle line comments for the right language), **CSV tools** (sort, swap and
+prune columns), **Markdown extras** (tables, fences, task lists), **Date
+converter** (ISO ⇄ US ⇄ long-form dates, weekday included), **Identifier
+cases** (camelCase ⇄ snake_case ⇄ kebab-case ⇄ paths), and **Word frequency**.
 
 ### Themes
 

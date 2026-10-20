@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 authors = ["Fast Text contributors"]
@@ -27,9 +27,13 @@ keywords = ["editor", "text-editor", "tui", "scripting", "terminal"]
 categories = ["command-line-utilities", "text-editors", "development-tools"]
 
 [workspace.dependencies]
-fast-text-core = { path = "crates/fast-text-core" }
-fast-text-syntax = { path = "crates/fast-text-syntax" }
-fast-text-update = { path = "crates/fast-text-update" }
+fast-text-core = { version = "0.3.0", path = "crates/fast-text-core" }
+fast-text-syntax = { version = "0.3.0", path = "crates/fast-text-syntax" }
+fast-text-plugin = { version = "0.3.0", path = "crates/fast-text-plugin" }
+fast-text-lsp = { version = "0.3.0", path = "crates/fast-text-lsp" }
+fast-text-textwrite = { version = "0.3.0", path = "crates/fast-text-textwrite" }
+fast-text-update = { version = "0.3.0", path = "crates/fast-text-update" }
+textwrite = { version = "0.3.0", path = "crates/textwrite" }
 
 ropey = "1.6"
 unicode-segmentation = "1.11"

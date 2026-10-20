@@ -14,5 +14,5 @@ name = "fast_text_textwrite"
 path = "src/lib.rs"
 
 [dependencies]
-fast-text-plugin = { path = "../fast-text-plugin" }
-textwrite = { path = "../textwrite" }
+fast-text-plugin.workspace = true
+textwrite.workspace = true

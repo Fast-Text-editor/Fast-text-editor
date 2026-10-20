@@ -20,6 +20,12 @@ highlight a plugin and press `Enter`.
 | `markdown_pro.tw` | Headings, a table skeleton, fenced code, links, quotes and thematic breaks |
 | `whitespace.tw` | Trim trailing spaces, tabs ↔ spaces, collapse runs of blank lines |
 | `snippets.tw` | Section banners, dividers, note blocks, TODO markers and checkboxes |
+| `comments.tw` | Toggle line comments for over thirty languages, wrap blocks, build commented banners |
+| `csv_tools.tw` | Pad columns into alignment, sort by a column, count fields, swap columns, render a bordered table |
+| `markdown_extras.tw` | Task lists, footnotes, definition lists, reference links, strikethrough, a generated table of contents |
+| `date_time.tw` | Read a date from the selection and rewrite it as ISO, long, short, slash or compact form, with the weekday |
+| `identifier_case.tw` | Convert names between snake, camel, Pascal, kebab, CONSTANT and dot.case, or split them into words |
+| `word_frequency.tw` | Count the selection's words, rank them, chart them as a comment block, estimate reading time |
 
 ## Writing your own
 

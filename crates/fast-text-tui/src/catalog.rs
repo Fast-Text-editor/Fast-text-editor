@@ -72,6 +72,48 @@ pub const CATALOG: &[CatalogPlugin] = &[
         description: "Section banners, dividers, note blocks, TODO markers and checkboxes",
         source: include_str!("../plugin-catalog/snippets.tw"),
     },
+    CatalogPlugin {
+        file_name: "comments.tw",
+        title: "Comments",
+        description: "Toggle line comments, wrap blocks and build commented banners \
+                      for over thirty languages",
+        source: include_str!("../plugin-catalog/comments.tw"),
+    },
+    CatalogPlugin {
+        file_name: "csv_tools.tw",
+        title: "CSV tools",
+        description: "Pad columns into alignment, sort by a column, count fields, \
+                      swap columns and render a bordered table",
+        source: include_str!("../plugin-catalog/csv_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "markdown_extras.tw",
+        title: "Markdown extras",
+        description: "Task lists, footnotes, definition lists, reference links, \
+                      strikethrough and a generated table of contents",
+        source: include_str!("../plugin-catalog/markdown_extras.tw"),
+    },
+    CatalogPlugin {
+        file_name: "date_time.tw",
+        title: "Date converter",
+        description: "Read a date from the selection and rewrite it as ISO, long, \
+                      short, slash or compact form, with the weekday",
+        source: include_str!("../plugin-catalog/date_time.tw"),
+    },
+    CatalogPlugin {
+        file_name: "identifier_case.tw",
+        title: "Identifier cases",
+        description: "Convert names between snake, camel, Pascal, kebab, CONSTANT \
+                      and dot.case, or split them into words",
+        source: include_str!("../plugin-catalog/identifier_case.tw"),
+    },
+    CatalogPlugin {
+        file_name: "word_frequency.tw",
+        title: "Word frequency",
+        description: "Count the selection's words, rank them, chart them as a \
+                      comment block and estimate reading time",
+        source: include_str!("../plugin-catalog/word_frequency.tw"),
+    },
 ];
 
 /// The catalog entry with this file name, if any.

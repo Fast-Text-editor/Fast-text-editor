@@ -20,6 +20,6 @@ path = "src/main.rs"
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
-fast-text-core = { path = "../fast-text-core" }
-fast-text-syntax = { path = "../fast-text-syntax" }
+fast-text-core.workspace = true
+fast-text-syntax.workspace = true
 fast-text-update.workspace = true

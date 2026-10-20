@@ -41,6 +41,44 @@ pub enum SidebarAction {
     Unfocus,
 }
 
+/// What the inline "new" prompt will create.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateKind {
+    File,
+    Folder,
+}
+
+/// The inline new-file / new-folder prompt at the bottom of the panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CreatePrompt {
+    kind: CreateKind,
+    input: String,
+    /// A rejected name or a failed creation, shown next to the input.
+    error: Option<String>,
+}
+
+impl CreatePrompt {
+    fn new(kind: CreateKind) -> Self {
+        Self {
+            kind,
+            input: String::new(),
+            error: None,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self.kind {
+            CreateKind::File => "New file",
+            CreateKind::Folder => "New folder",
+        }
+    }
+
+    fn with_error(mut self, error: impl Into<String>) -> Self {
+        self.error = Some(error.into());
+        self
+    }
+}
+
 /// The folder explorer state.
 pub struct Sidebar {
     root: PathBuf,
@@ -56,6 +94,8 @@ pub struct Sidebar {
     scroll: usize,
     view_height: usize,
     error: Option<String>,
+    /// The inline new-file / new-folder prompt, while it is open.
+    create_prompt: Option<CreatePrompt>,
     /// Screen rectangle of the whole panel (set while drawing).
     outer_area: Rect,
     /// Screen rectangle of the list inside the border (set while drawing).
@@ -76,6 +116,7 @@ impl Sidebar {
             scroll: 0,
             view_height: DEFAULT_HEIGHT,
             error: None,
+            create_prompt: None,
             outer_area: Rect::default(),
             list_area: Rect::default(),
         };
@@ -130,6 +171,29 @@ impl Sidebar {
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// Whether the inline new-file / new-folder prompt is open.
+    pub fn is_creating(&self) -> bool {
+        self.create_prompt.is_some()
+    }
+
+    /// The prompt's label ("New file" / "New folder"), if it is open.
+    pub fn create_label(&self) -> Option<&'static str> {
+        self.create_prompt.as_ref().map(CreatePrompt::label)
+    }
+
+    /// What has been typed into the prompt so far.
+    pub fn create_input(&self) -> &str {
+        self.create_prompt
+            .as_ref()
+            .map(|p| p.input.as_str())
+            .unwrap_or("")
+    }
+
+    /// A rejected name or failed creation, shown next to the input.
+    pub fn create_error(&self) -> Option<&str> {
+        self.create_prompt.as_ref().and_then(|p| p.error.as_deref())
     }
 
     /// Records how many rows are on screen (used to keep the selection visible).
@@ -268,6 +332,10 @@ impl Sidebar {
 
     /// Handles one key press, returning what (if anything) the app should do.
     pub fn handle_key(&mut self, key: KeyEvent) -> SidebarAction {
+        // While the new-file / new-folder prompt is open it owns the keyboard.
+        if self.create_prompt.is_some() {
+            return self.handle_create_key(key);
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl {
             return SidebarAction::None;
@@ -289,9 +357,128 @@ impl Sidebar {
                 self.show_hidden = !self.show_hidden;
                 self.refresh();
             }
+            // `n` / `N` create a file / folder next to the selection, like the
+            // buttons at the top of the Visual Studio Code explorer.
+            KeyCode::Char('n') => self.begin_create(CreateKind::File),
+            KeyCode::Char('N') => self.begin_create(CreateKind::Folder),
             _ => {}
         }
         SidebarAction::None
+    }
+
+    /// Opens the inline prompt for a new file or folder.
+    fn begin_create(&mut self, kind: CreateKind) {
+        self.error = None;
+        self.create_prompt = Some(CreatePrompt::new(kind));
+    }
+
+    /// Handles a key press while the create prompt is open.
+    fn handle_create_key(&mut self, key: KeyEvent) -> SidebarAction {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if ctrl || alt {
+            return SidebarAction::None;
+        }
+        match key.code {
+            // Escape closes the prompt and keeps the explorer focused.
+            KeyCode::Esc => self.create_prompt = None,
+            KeyCode::Enter => return self.commit_create(),
+            KeyCode::Backspace => {
+                if let Some(prompt) = self.create_prompt.as_mut() {
+                    prompt.input.pop();
+                    prompt.error = None;
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(prompt) = self.create_prompt.as_mut() {
+                    prompt.input.push(c);
+                    prompt.error = None;
+                }
+            }
+            _ => {}
+        }
+        SidebarAction::None
+    }
+
+    /// Creates what the prompt describes and selects (or opens) the result.
+    fn commit_create(&mut self) -> SidebarAction {
+        let Some(mut prompt) = self.create_prompt.take() else {
+            return SidebarAction::None;
+        };
+        let name = prompt.input.trim().to_string();
+        // Names are single path components: no separators, no dot segments,
+        // nothing that could climb out of the explorer's root.
+        let valid = !name.is_empty()
+            && !name.contains('/')
+            && !name.contains('\\')
+            && name != "."
+            && name != "..";
+        if !valid {
+            self.create_prompt = Some(prompt.with_error("enter a plain name"));
+            return SidebarAction::None;
+        }
+        let base = self.create_target();
+        let path = base.join(&name);
+        match prompt.kind {
+            CreateKind::Folder => {
+                // `create_dir` (not `create_dir_all`) so an existing name is
+                // an error rather than a silent success.
+                if let Err(e) = std::fs::create_dir(&path) {
+                    prompt.error = Some(e.to_string());
+                    self.create_prompt = Some(prompt);
+                    return SidebarAction::None;
+                }
+                // Reveal the new folder: expand its parents, then select it.
+                self.expanded.insert(base.clone());
+                self.refresh();
+                self.select_path(&path);
+                SidebarAction::None
+            }
+            CreateKind::File => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                {
+                    Ok(_) => {
+                        self.expanded.insert(base);
+                        self.refresh();
+                        self.select_path(&path);
+                        // Files open in the editor, like activating the row.
+                        SidebarAction::Open(path)
+                    }
+                    Err(e) => {
+                        prompt.error = Some(e.to_string());
+                        self.create_prompt = Some(prompt);
+                        SidebarAction::None
+                    }
+                }
+            }
+        }
+    }
+
+    /// The folder new entries are created in: the highlighted folder, the
+    /// highlighted file's folder, or the explorer's root.
+    fn create_target(&self) -> PathBuf {
+        match self.entries.get(self.selected) {
+            Some(e) if e.is_dir => e.path.clone(),
+            Some(e) => e
+                .path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.root.clone()),
+            None => self.root.clone(),
+        }
+    }
+
+    /// Moves the selection to the row for `path`, if it is visible.
+    fn select_path(&mut self, path: &Path) {
+        if let Some(index) = self.entries.iter().position(|e| e.path == path) {
+            self.select(index);
+        }
     }
 
     /// Opens the selected file, or toggles the selected directory.
@@ -596,5 +783,207 @@ mod tests {
         let index = sidebar.row_at(2, 1).unwrap();
         assert_eq!(sidebar.activate_index(index), SidebarAction::None);
         assert_eq!(sidebar.entries().len(), 4, "src should have expanded");
+    }
+
+    // ------------------------------------------------------------------
+    // The inline new-file / new-folder prompt
+    // ------------------------------------------------------------------
+
+    /// Types `text` into the open create prompt, key by key.
+    fn type_name(sidebar: &mut Sidebar, text: &str) {
+        for c in text.chars() {
+            sidebar.handle_key(key(KeyCode::Char(c)));
+        }
+    }
+
+    #[test]
+    fn n_opens_the_new_file_prompt_and_esc_closes_it() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        assert!(sidebar.is_creating());
+        assert_eq!(sidebar.create_label(), Some("New file"));
+        assert_eq!(sidebar.create_input(), "");
+
+        type_name(&mut sidebar, "notes.txt");
+        assert_eq!(sidebar.create_input(), "notes.txt");
+        // Typing in the prompt must not reach the explorer's rows.
+        assert_eq!(names(&sidebar), vec!["src", "README.md", "zeta.txt"]);
+
+        sidebar.handle_key(key(KeyCode::Esc));
+        assert!(!sidebar.is_creating());
+        assert!(
+            !tree.path().join("notes.txt").exists(),
+            "Escape must abandon the pending file"
+        );
+    }
+
+    #[test]
+    fn capital_n_opens_the_new_folder_prompt() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+
+        sidebar.handle_key(key(KeyCode::Char('N')));
+        assert!(sidebar.is_creating());
+        assert_eq!(sidebar.create_label(), Some("New folder"));
+    }
+
+    #[test]
+    fn creating_a_file_creates_it_opens_it_and_selects_it() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+        sidebar.handle_key(key(KeyCode::Down)); // -> README.md, so the root
+
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        type_name(&mut sidebar, "notes.txt");
+        match sidebar.handle_key(key(KeyCode::Enter)) {
+            SidebarAction::Open(path) => assert_eq!(path, tree.path().join("notes.txt")),
+            other => panic!("expected Open, got {other:?}"),
+        }
+        assert!(tree.path().join("notes.txt").is_file());
+        assert!(!sidebar.is_creating(), "the prompt closes on success");
+        assert_eq!(sidebar.entries()[sidebar.selected()].name, "notes.txt");
+    }
+
+    #[test]
+    fn creating_a_file_inside_the_highlighted_folder() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+
+        // The highlighted row is the `src` directory: the file lands in it.
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        type_name(&mut sidebar, "lib.rs");
+        match sidebar.handle_key(key(KeyCode::Enter)) {
+            SidebarAction::Open(path) => assert_eq!(path, tree.path().join("src/lib.rs")),
+            other => panic!("expected Open, got {other:?}"),
+        }
+        assert!(tree.path().join("src/lib.rs").is_file());
+        assert_eq!(sidebar.entries()[sidebar.selected()].name, "lib.rs");
+    }
+
+    #[test]
+    fn creating_a_file_next_to_a_highlighted_file() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+
+        // Highlight src/main.rs: the new file joins it in src/.
+        sidebar.handle_key(key(KeyCode::Right)); // expand src
+        sidebar.handle_key(key(KeyCode::Down)); // -> main.rs
+        assert_eq!(sidebar.entries()[sidebar.selected()].name, "main.rs");
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        type_name(&mut sidebar, "helper.rs");
+        match sidebar.handle_key(key(KeyCode::Enter)) {
+            SidebarAction::Open(path) => assert_eq!(path, tree.path().join("src/helper.rs")),
+            other => panic!("expected Open, got {other:?}"),
+        }
+        assert!(tree.path().join("src/helper.rs").is_file());
+    }
+
+    #[test]
+    fn creating_a_folder_selects_it_without_opening() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+        sidebar.handle_key(key(KeyCode::Down)); // -> README.md, so the root
+
+        sidebar.handle_key(key(KeyCode::Char('N')));
+        type_name(&mut sidebar, "docs");
+        assert_eq!(
+            sidebar.handle_key(key(KeyCode::Enter)),
+            SidebarAction::None,
+            "folders are selected, not opened"
+        );
+        assert!(tree.path().join("docs").is_dir());
+        assert!(!sidebar.is_creating());
+        assert_eq!(sidebar.entries()[sidebar.selected()].name, "docs");
+    }
+
+    #[test]
+    fn invalid_names_are_rejected_and_keep_the_prompt_open() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+
+        for bad in ["", "a/b", ".", ".."] {
+            sidebar.handle_key(key(KeyCode::Char('n')));
+            type_name(&mut sidebar, bad);
+            assert_eq!(sidebar.handle_key(key(KeyCode::Enter)), SidebarAction::None);
+            assert!(sidebar.is_creating(), "{bad:?} must keep the prompt open");
+            assert!(sidebar.create_error().is_some(), "{bad:?} must be reported");
+            assert_eq!(
+                names(&sidebar),
+                vec!["src", "README.md", "zeta.txt"],
+                "{bad:?} must not have been created"
+            );
+            sidebar.handle_key(key(KeyCode::Esc));
+        }
+    }
+
+    #[test]
+    fn backspace_edits_the_input_and_clears_the_error() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        type_name(&mut sidebar, "a/b");
+        sidebar.handle_key(key(KeyCode::Enter));
+        assert!(sidebar.create_error().is_some());
+
+        // One Backspace removes one character and clears the error.
+        sidebar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(sidebar.create_input(), "a/");
+        assert_eq!(sidebar.create_error(), None);
+        sidebar.handle_key(key(KeyCode::Backspace));
+        assert_eq!(sidebar.create_input(), "a");
+    }
+
+    #[test]
+    fn an_existing_name_is_an_error_and_creates_nothing() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+        sidebar.handle_key(key(KeyCode::Down)); // -> README.md, so the root
+
+        // A file that already exists.
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        type_name(&mut sidebar, "README.md");
+        assert_eq!(sidebar.handle_key(key(KeyCode::Enter)), SidebarAction::None);
+        assert!(sidebar.is_creating());
+        assert!(sidebar.create_error().is_some());
+        sidebar.handle_key(key(KeyCode::Esc));
+
+        // A folder that already exists.
+        sidebar.handle_key(key(KeyCode::Char('N')));
+        type_name(&mut sidebar, "src");
+        assert_eq!(sidebar.handle_key(key(KeyCode::Enter)), SidebarAction::None);
+        assert!(sidebar.is_creating());
+        assert!(sidebar.create_error().is_some());
+    }
+
+    #[test]
+    fn prompt_keys_do_not_leak_into_the_explorer() {
+        let tree = TempDir::new();
+        build_tree(&tree);
+        let mut sidebar = Sidebar::new(tree.path().to_path_buf());
+        sidebar.handle_key(key(KeyCode::Down)); // highlight README.md
+
+        sidebar.handle_key(key(KeyCode::Char('n')));
+        // Navigation keys are ignored while the prompt is open.
+        sidebar.handle_key(key(KeyCode::Down));
+        sidebar.handle_key(key(KeyCode::Up));
+        sidebar.handle_key(key(KeyCode::Enter)); // rejected: empty name
+        assert_eq!(sidebar.entries()[sidebar.selected()].name, "README.md");
+        assert!(sidebar.is_creating());
+
+        // Modifier chords never type into the prompt either.
+        sidebar.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert_eq!(sidebar.create_input(), "");
     }
 }

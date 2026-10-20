@@ -1,0 +1,208 @@
+# CSV and column tools for Fast Text — a TextWrite plugin.
+#
+# Treats the selection as comma-separated rows: pad the columns so everything
+# lines up, sort by any column, count the fields, swap two columns, or strip
+# the header. A tiny example of parsing and re-assembling structured text
+# without leaving the editor.
+
+fn csv_fields(line) {
+    return map(split(line, ","), fn(f) {
+        return trim(f)
+    })
+}
+
+fn csv_pad() {
+    if not has_selection {
+        message("Select some CSV rows first")
+        return
+    }
+    let rows = map(lines(selected_text), csv_fields)
+    let widths = []
+    for row in rows {
+        let i = 0
+        while i < len(row) {
+            if i >= len(widths) {
+                push(widths, 0)
+            }
+            if len(row[i]) > widths[i] {
+                widths[i] = len(row[i])
+            }
+            i += 1
+        }
+    }
+    let out = []
+    for row in rows {
+        let cells = []
+        let i = 0
+        while i < len(row) {
+            let cell = row[i]
+            # Pad every field except the last one on the line.
+            if i < len(row) - 1 {
+                let pad = widths[i] - len(cell)
+                cell = cell + map(range(pad), fn(k) {
+                    return " "
+                }).join("")
+            }
+            push(cells, cell)
+            i += 1
+        }
+        push(out, join(cells, ", "))
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("CSV: pad columns", "Align the selected rows by padding each column to equal width", "csv_pad")
+
+fn csv_field_at(row, column) {
+    if column < len(row) {
+        return row[column]
+    }
+    return ""
+}
+
+fn csv_sort_by_column() {
+    if not has_selection {
+        message("Select some CSV rows first")
+        return
+    }
+    let all = lines(selected_text)
+    if len(all) < 2 {
+        message("Need at least two rows to sort")
+        return
+    }
+    # Column index 1 = the second column (0-based).
+    let column = 1
+    let header = first(all)
+    let body = slice(all, 1, len(all))
+    let sorted = sort_by(body, fn(a, b) {
+        let va = csv_field_at(csv_fields(a), column)
+        let vb = csv_field_at(csv_fields(b), column)
+        if va < vb {
+            return -1
+        }
+        if va > vb {
+            return 1
+        }
+        return 0
+    })
+    delete_selection()
+    insert(join([header] + sorted, "\n"))
+}
+command_with_desc("CSV: sort by second column", "Keep the header row and sort the rest by the second column", "csv_sort_by_column")
+
+fn csv_count_fields() {
+    if not has_selection {
+        message("Select some CSV rows first")
+        return
+    }
+    let rows = map(lines(selected_text), csv_fields)
+    let counts = {}
+    for row in rows {
+        let n = str(len(row))
+        if has(counts, n) {
+            counts[n] = counts[n] + 1
+        } else {
+            counts[n] = 1
+        }
+    }
+    let parts = []
+    for k in keys(counts) {
+        push(parts, "{counts[k]} rows with {k} fields")
+    }
+    sort(parts)
+    message(join(parts, ", "))
+}
+command_with_desc("CSV: count fields", "Report how many rows have each field count", "csv_count_fields")
+
+fn csv_swap_columns() {
+    if not has_selection {
+        message("Select some CSV rows first")
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        let f = csv_fields(line)
+        if len(f) >= 2 {
+            let tmp = f[0]
+            f[0] = f[1]
+            f[1] = tmp
+        }
+        push(out, join(f, ", "))
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("CSV: swap first two columns", "Exchange the first and second field of each selected row", "csv_swap_columns")
+
+fn csv_strip_header() {
+    if not has_selection {
+        message("Select some CSV rows first")
+        return
+    }
+    let all = lines(selected_text)
+    if len(all) < 2 {
+        message("Nothing below the header")
+        return
+    }
+    delete_selection()
+    insert(join(slice(all, 1, len(all)), "\n"))
+}
+command_with_desc("CSV: strip header", "Drop the first selected row, keeping the data", "csv_strip_header")
+
+fn csv_to_table() {
+    if not has_selection {
+        message("Select some CSV rows first")
+        return
+    }
+    let rows = map(lines(selected_text), csv_fields)
+    let widths = []
+    for row in rows {
+        let i = 0
+        while i < len(row) {
+            if i >= len(widths) {
+                push(widths, 0)
+            }
+            if len(row[i]) > widths[i] {
+                widths[i] = len(row[i])
+            }
+            i += 1
+        }
+    }
+    let pad_to = fn(cell, width) {
+        let pad = width - len(cell)
+        if pad <= 0 {
+            return cell
+        }
+        return cell + map(range(pad), fn(k) {
+            return " "
+        }).join("")
+    }
+    let out = []
+    let i = 0
+    for row in rows {
+        let cells = []
+        let j = 0
+        while j < len(row) {
+            push(cells, pad_to(row[j], widths[j]))
+            j += 1
+        }
+        let line = "| " + join(cells, " | ") + " |"
+        # A rule under the header row.
+        if i == 0 {
+            let bars = []
+            for w in widths {
+                push(bars, map(range(w + 2), fn(k) {
+                    return "-"
+                }).join(""))
+            }
+            push(out, line)
+            push(out, "|" + join(bars, "|") + "|")
+        } else {
+            push(out, line)
+        }
+        i += 1
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("CSV: to table", "Render the selection as a bordered table with a header rule", "csv_to_table")

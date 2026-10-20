@@ -313,20 +313,26 @@ function Build-FromSource {
             $src = (Get-Location).Path
             Write-Log 'Building from the current checkout'
         } else {
-            Need git
+            # A dry run only prints the plan: it must work on machines that
+            # have neither git nor cargo, and before the clone happens.
+            if (-not $DryRun) { Need git }
             $src = Join-Path $script:TmpDir 'src'
             Write-Log "Cloning https://github.com/$Repo.git"
-            if ($Version -eq 'latest') {
-                git clone --depth 1 "https://github.com/$Repo.git" $src
-            } else {
-                git clone --depth 1 --branch $Version "https://github.com/$Repo.git" $src
+            if (-not $DryRun) {
+                if ($Version -eq 'latest') {
+                    git clone --depth 1 "https://github.com/$Repo.git" $src
+                } else {
+                    git clone --depth 1 --branch $Version "https://github.com/$Repo.git" $src
+                }
+                if ($LASTEXITCODE -ne 0) { Fail 'the clone failed' }
             }
-            if ($LASTEXITCODE -ne 0) { Fail 'the clone failed' }
         }
     }
-    if (-not (Test-Path $src)) { Fail "source directory '$src' does not exist" }
-    if (-not (Test-Path (Join-Path $src 'Cargo.toml'))) { Fail "'$src' is not a Fast Text checkout" }
-    Need cargo
+    if (-not $DryRun) {
+        if (-not (Test-Path $src)) { Fail "source directory '$src' does not exist" }
+        if (-not (Test-Path (Join-Path $src 'Cargo.toml'))) { Fail "'$src' is not a Fast Text checkout" }
+        Need cargo
+    }
 
     $cargoArgs = @('build', '--release', '-p', 'fast-text-tui', '-p', 'textwrite')
     if ($Gui) { $cargoArgs += @('-p', 'fast-text-gui') }
@@ -370,14 +376,6 @@ function Find-Binary([string]$Name, [string]$Dir) {
         Select-Object -First 1
     if ($hit) { return $hit.FullName }
     return $null
-}
-
-function Copy-Executable([string]$Source, [string]$Destination) {
-    Copy-Item -Path $Source -Destination $Destination -Force
-    try {
-        # chmod +x for the sake of MSYS2/Git Bash callers.
-        (Get-Item -Path $Destination).Attributes = (Get-Item -Path $Destination).Attributes
-    } catch { }
 }
 
 function Install-Binaries {
@@ -604,32 +602,42 @@ function Get-LatestTag {
 # Records which version was installed, so later -Check/-Update runs and the
 # editor's own update check have something to compare against.
 function Write-VersionFile {
+    # NOTE: PowerShell variable names are case-insensitive, so a local
+    # `$version` would shadow the script's `$Version` parameter (and
+    # `$version = $null` would wipe it); the recorded value lives in `$ver`.
     $file = Get-VersionFilePath
-    $version = $null
+    $ver = $null
     $exe = Join-Path $script:BinDir "$Program.exe"
     if (-not $DryRun -and (Test-Path $exe)) {
         # Ask the freshly installed editor itself — the most reliable source.
         try {
             $out = & $exe --version 2>$null
-            if ($out) { $version = ([string]$out).Trim() -replace '^\S+\s+', '' }
+            if ($out) { $ver = ([string]$out).Trim() -replace '^\S+\s+', '' }
         } catch {
-            $version = $null
+            $ver = $null
         }
     }
-    if (-not $version) {
-        try { $version = Get-LatestTag } catch { $version = $null }
+    if (-not $ver) {
+        # A pinned install must record the version it installed, not the
+        # newest release — otherwise a later -Check would wrongly report
+        # "up to date".
+        if ($Version -ne 'latest') {
+            $ver = $Version
+        } else {
+            try { $ver = Get-LatestTag } catch { $ver = $null }
+        }
     }
-    if (-not $version) {
+    if (-not $ver) {
         Warn 'could not work out which version was installed'
         return
     }
-    $version = $version.TrimStart('v', 'V')
+    $ver = $ver.TrimStart('v', 'V')
     if ($DryRun) {
-        Write-Log "  would record version $version in $file"
+        Write-Log "  would record version $ver in $file"
         return
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
-    Set-Content -Path $file -Value $version -Encoding UTF8
+    Set-Content -Path $file -Value $ver -Encoding UTF8
     $script:Manifest += $file
 }
 
@@ -726,6 +734,7 @@ function Invoke-AdoptExisting {
 function Invoke-Update {
     if ($Version -ne 'latest') {
         Write-Log "Updating to $Version"
+        Use-GuiFromManifest
         return
     }
     $latest = (Get-LatestTag).TrimStart('v', 'V')

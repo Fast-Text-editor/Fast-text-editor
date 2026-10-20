@@ -1,0 +1,138 @@
+# Identifier case conversion for Fast Text — a TextWrite plugin.
+#
+# Developers constantly move names between styles. These commands read the
+# selection (or the word at the caret) and rewrite it as snake_case,
+# camelCase, PascalCase, kebab-case, CONSTANT_CASE or dot.case. They also
+# split a long name into real words first, so `parseHTTPResponse2` becomes
+# `parse http response 2` and can then be recombined in any style.
+
+# Splits an identifier into lower-case words: honours existing camel humps,
+# digits, and any run of non-alphanumeric characters.
+fn iden_words(text) {
+    let out = []
+    let cur = ""
+    let upper_run = 0
+    for c in chars(text) {
+        let is_upper = index_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ", c) >= 0
+        let is_lower = index_of("abcdefghijklmnopqrstuvwxyz", c) >= 0
+        let is_digit = index_of("0123456789", c) >= 0
+        if not (is_upper or is_lower or is_digit) {
+            if cur is not "" {
+                push(out, cur)
+                cur = ""
+            }
+            upper_run = 0
+            continue
+        }
+        if is_upper {
+            # A hump boundary: end the word unless this begins an acronym.
+            if cur is not "" and upper_run < 2 {
+                push(out, cur)
+                cur = ""
+            }
+            cur = cur + lower(c)
+            upper_run += 1
+            continue
+        }
+        if is_digit and cur is not "" and upper_run is 0 and index_of("0123456789", slice(cur, len(cur) - 1, len(cur))) < 0 {
+            # A digit starting a new group after letters: start a new word.
+            push(out, cur)
+            cur = ""
+        }
+        cur = cur + c
+        upper_run = 0
+    }
+    if cur is not "" {
+        push(out, cur)
+    }
+    return out
+}
+
+# The text the commands act on: the selection, else nothing (the caret's
+# word is not exposed to plugins, so the selection is required).
+fn iden_source() {
+    if not has_selection {
+        message("Select an identifier first")
+        return ""
+    }
+    return selected_text
+}
+
+fn iden_snake() {
+    let s = iden_source()
+    if s is not "" {
+        delete_selection()
+        insert(join(iden_words(s), "_"))
+    }
+}
+command_with_desc("Identifier: snake_case", "Rewrite the selection as lower_snake_case", "iden_snake")
+
+fn iden_camel() {
+    let s = iden_source()
+    if s is not "" {
+        let words = iden_words(s)
+        let out = ""
+        let i = 0
+        for w in words {
+            if i is 0 {
+                out = w
+            } else {
+                out = out + upper(slice(w, 0, 1)) + slice(w, 1, len(w))
+            }
+            i += 1
+        }
+        delete_selection()
+        insert(out)
+    }
+}
+command_with_desc("Identifier: camelCase", "Rewrite the selection as camelCase", "iden_camel")
+
+fn iden_pascal() {
+    let s = iden_source()
+    if s is not "" {
+        let out = ""
+        for w in iden_words(s) {
+            out = out + upper(slice(w, 0, 1)) + slice(w, 1, len(w))
+        }
+        delete_selection()
+        insert(out)
+    }
+}
+command_with_desc("Identifier: PascalCase", "Rewrite the selection as PascalCase", "iden_pascal")
+
+fn iden_kebab() {
+    let s = iden_source()
+    if s is not "" {
+        delete_selection()
+        insert(join(iden_words(s), "-"))
+    }
+}
+command_with_desc("Identifier: kebab-case", "Rewrite the selection as kebab-case", "iden_kebab")
+
+fn iden_constant() {
+    let s = iden_source()
+    if s is not "" {
+        delete_selection()
+        insert(upper(join(iden_words(s), "_")))
+    }
+}
+command_with_desc("Identifier: CONSTANT_CASE", "Rewrite the selection as CONSTANT_CASE", "iden_constant")
+
+fn iden_dotted() {
+    let s = iden_source()
+    if s is not "" {
+        delete_selection()
+        insert(join(iden_words(s), "."))
+    }
+}
+command_with_desc("Identifier: dot.case", "Rewrite the selection as dot.case", "iden_dotted")
+
+fn iden_explode() {
+    # Just the words, one per line — a staging step for further editing.
+    let s = iden_source()
+    if s is not "" {
+        delete_selection()
+        insert(join(iden_words(s), "\n"))
+    }
+}
+command_with_desc("Identifier: split into words", "Split the selection into its words, one per line", "iden_explode")

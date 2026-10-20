@@ -443,6 +443,12 @@ pub struct App {
     pub lsp: LspManager,
     /// Active completion popup, if any.
     pub completion: Option<CompletionState>,
+    /// Console/terminal panel visible.
+    pub console_visible: bool,
+    /// Console input buffer.
+    pub console_input: String,
+    /// Console output lines.
+    pub console_output: Vec<String>,
     /// Actions scheduled for future frames by a timed automation.
     pending: VecDeque<(Instant, EditorAction)>,
     /// Sorted names of every selectable language (curated + imported).
@@ -518,7 +524,7 @@ impl App {
         }
         if editors.is_empty() {
             editors.push(Editor::from_text(
-                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
+                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// In the explorer: n = new file  ·  N = new folder  ·  Enter opens.\n// Alt+C opens the console  ·  type shell commands, Esc closes it.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
                 LanguageId::Rust,
             ));
         }
@@ -548,6 +554,9 @@ impl App {
             plugin_manager,
             lsp: LspManager::new(lsp),
             completion: None,
+            console_visible: false,
+            console_input: String::new(),
+            console_output: Vec::new(),
             language_names: all_language_names(),
             pending: VecDeque::new(),
             sidebar,
@@ -573,6 +582,70 @@ impl App {
         }
     }
 
+    /// Toggles the console panel.
+    pub fn toggle_console(&mut self) {
+        self.console_visible = !self.console_visible;
+    }
+
+    /// Executes the current console input as a shell command.
+    pub fn run_console_command(&mut self) {
+        let input = self.console_input.trim().to_string();
+        if input.is_empty() {
+            return;
+        }
+        self.console_output.push(format!("$ {input}"));
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&input)
+            .output();
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                for line in stdout.lines() {
+                    self.console_output.push(line.to_string());
+                }
+                for line in stderr.lines() {
+                    self.console_output.push(line.to_string());
+                }
+                if !out.status.success() {
+                    self.console_output
+                        .push(format!("(exit code: {})", out.status.code().unwrap_or(-1)));
+                }
+            }
+            Err(e) => self
+                .console_output
+                .push(format!("error running command: {e}")),
+        }
+        self.console_input.clear();
+        if self.console_output.len() > 1000 {
+            self.console_output.drain(0..500);
+        }
+    }
+
+    /// Handles a key press while the console panel is focused.
+    pub fn handle_console_key(&mut self, key: KeyEvent) -> bool {
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Char('c') if alt => {
+                self.console_visible = false;
+            }
+            KeyCode::Esc => {
+                self.console_visible = false;
+            }
+            KeyCode::Enter => {
+                self.run_console_command();
+            }
+            KeyCode::Backspace => {
+                self.console_input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.console_input.push(c);
+            }
+            _ => {}
+        }
+        true
+    }
     /// Applies a loaded config, returning the warnings it produced.
     fn apply_config(&mut self, config: Config) -> Vec<String> {
         let key_map = config.key_map();
@@ -2755,6 +2828,10 @@ impl App {
             self.handle_prompt_key(key);
             return true;
         }
+        if self.console_visible {
+            self.handle_console_key(key);
+            return true;
+        }
         self.handle_editor_key(key)
     }
 
@@ -3134,6 +3211,7 @@ impl App {
             KeyCode::Char('m') if alt => self.open_plugin_manager(),
             // Alt+U checks GitHub for a newer release (terminal-independent).
             KeyCode::Char('u') if alt => self.begin_update_check(true),
+            KeyCode::Char('c') if alt => self.console_visible = !self.console_visible,
             KeyCode::F(2) => {
                 self.prompt = Prompt::SaveAs {
                     input: self
@@ -3161,7 +3239,6 @@ impl App {
             }
             KeyCode::Char('o') if alt => self.show_document_symbols(),
             KeyCode::Char('n') if alt => self.open_rename_prompt(),
-            KeyCode::Char('c') if alt => self.toggle_comment(),
             KeyCode::Up if alt && shift => self.editor_mut().doc.add_caret_above(),
             KeyCode::Down if alt && shift => self.editor_mut().doc.add_caret_below(),
             KeyCode::Up if alt => self.move_line_up(),
@@ -4938,5 +5015,84 @@ mod tests {
                 entry.error
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // The console panel (Alt+C)
+    // ------------------------------------------------------------------
+
+    fn alt(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT)
+    }
+
+    #[test]
+    fn alt_c_toggles_the_console() {
+        let mut app = empty_app();
+        assert!(!app.console_visible);
+        app.handle_key(alt('c'));
+        assert!(app.console_visible);
+        app.handle_key(alt('c'));
+        assert!(!app.console_visible);
+    }
+
+    #[test]
+    fn typing_in_the_console_never_reaches_the_buffer() {
+        let mut app = empty_app();
+        set_text(&mut app, "keep me");
+        app.handle_key(alt('c'));
+        for c in "echo hi".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.console_input, "echo hi");
+        assert_eq!(app.editor().doc.text(), "keep me");
+
+        // Backspace edits the console's input, not the document.
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.console_input, "echo h");
+        assert_eq!(app.editor().doc.text(), "keep me");
+
+        // Escape closes the panel; the typed text is kept in the buffer.
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.console_visible);
+        assert_eq!(app.console_input, "echo h");
+    }
+
+    #[test]
+    fn alt_c_from_inside_the_console_closes_it() {
+        let mut app = empty_app();
+        app.toggle_console();
+        app.handle_key(alt('c'));
+        assert!(!app.console_visible);
+    }
+
+    #[test]
+    fn an_empty_console_command_does_nothing() {
+        // Enter with an empty input must return before any command runs, so
+        // this test never spawns a process.
+        let mut app = empty_app();
+        app.toggle_console();
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.console_output.is_empty());
+        assert!(app.console_visible, "the panel stays open");
+    }
+
+    #[test]
+    fn the_console_beats_the_editor_for_keys_but_not_for_modals() {
+        let mut app = empty_app();
+        set_text(&mut app, "doc");
+
+        // The help screen outranks the console: with help open, Alt+C must
+        // not reach the panel (dispatch order: help before console).
+        app.show_help = true;
+        app.handle_key(alt('c'));
+        assert!(!app.console_visible, "help has precedence over the console");
+        app.show_help = false;
+
+        // With no modal up, Alt+C reaches the console, which then owns keys.
+        app.handle_key(alt('c'));
+        assert!(app.console_visible);
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.console_input, "x");
+        assert_eq!(app.editor().doc.text(), "doc");
     }
 }

@@ -29,10 +29,10 @@ path = "src/bin/ft.rs"
 [dependencies]
 crossterm = "0.29.0"
 fast-text-core.workspace = true
-fast-text-lsp = { path = "../fast-text-lsp" }
-fast-text-plugin = { path = "../fast-text-plugin" }
-fast-text-syntax = { path = "../fast-text-syntax" }
-fast-text-textwrite = { path = "../fast-text-textwrite" }
+fast-text-lsp.workspace = true
+fast-text-plugin.workspace = true
+fast-text-syntax.workspace = true
+fast-text-textwrite.workspace = true
 fast-text-update.workspace = true
 ratatui = "0.30.2"
 unicode-width.workspace = true

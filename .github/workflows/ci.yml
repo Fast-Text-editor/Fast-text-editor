@@ -109,6 +109,37 @@ jobs:
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "Using the Fast Text already on your PATH: $bin"
           printf '%s\n' "$out" | grep -q "Updating from v0.1.0 to v0.2.0"
+      - name: Dry run prints the plan without git, cargo or a checkout (offline)
+        run: |
+          # Simulate a machine that has neither git nor cargo and is not a
+          # checkout: --dry-run must still print the whole plan.
+          tools="$(mktemp -d)"
+          for t in uname id dirname basename mktemp head tr sed cat grep rm mkdir; do
+            ln -s "$(command -v "$t")" "$tools/$t"
+          done
+          workdir="$(mktemp -d)"
+          out="$(cd "$workdir" && PATH="$tools" FAST_TEXT_LATEST_TAG=v0.3.0 /bin/sh "$GITHUB_WORKSPACE/install.sh" --dry-run 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "would run: git clone"
+          printf '%s\n' "$out" | grep -q "would run: cargo build"
+          printf '%s\n' "$out" | grep -q "would record version 0.3.0"
+      - name: A pinned install records its own version (offline)
+        run: |
+          prefix="$(mktemp -d)"
+          out="$(FAST_TEXT_LATEST_TAG=v9.9.9 sh install.sh --dry-run --from-source --version v0.1.0 --prefix "$prefix" 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "would record version 0.1.0"
+      - name: Uninstall removes the binaries and the version record
+        run: |
+          prefix="$(mktemp -d)"
+          mkdir -p "$prefix/bin" "$prefix/share/fast-text"
+          touch "$prefix/bin/fast-text" "$prefix/bin/ft" "$prefix/share/fast-text/installed-version"
+          printf '%s\n' "$prefix/bin/fast-text" "$prefix/bin/ft" \
+            "$prefix/share/fast-text/installed-version" >"$prefix/share/fast-text/installed-files"
+          sh install.sh --uninstall --prefix "$prefix" >/dev/null 2>&1
+          test ! -e "$prefix/bin/fast-text"
+          test ! -e "$prefix/share/fast-text/installed-version"
+          test ! -d "$prefix/share/fast-text"
 
   install-script-windows:
     name: install.ps1 syntax
@@ -153,3 +184,47 @@ jobs:
           Write-Output $out
           if ($out -notmatch 'already installed under') { Write-Error 'expected an upgrade notice'; exit 1 }
           if ($out -notmatch 'Updating from v0\.1\.0 to v0\.2\.0') { Write-Error 'expected an update plan'; exit 1 }
+      - name: Pinned install records its own version (offline)
+        shell: pwsh
+        run: |
+          $prefix = Join-Path ([System.IO.Path]::GetTempPath()) ("ft-pin-" + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+          $env:FAST_TEXT_LATEST_TAG = 'v9.9.9'
+          $out = (& ./install.ps1 -DryRun -Version v0.1.0 -Prefix $prefix 2>&1 | Out-String)
+          Write-Output $out
+          if ($out -notmatch 'would record version 0\.1\.0') { Write-Error 'expected the pinned version to be recorded'; exit 1 }
+      - name: Dry run keeps a previously installed GUI on a pinned update (offline)
+        shell: pwsh
+        run: |
+          $prefix = Join-Path ([System.IO.Path]::GetTempPath()) ("ft-gui-" + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+          Set-Content -Path (Join-Path $prefix 'installed-version.txt') -Value '0.2.0'
+          Set-Content -Path (Join-Path $prefix 'installed-files.txt') -Value (Join-Path $prefix 'bin/fast-text-gui.exe')
+          $env:FAST_TEXT_LATEST_TAG = 'v0.3.0'
+          $out = (& ./install.ps1 -Update -Version v0.3.0 -DryRun -Prefix $prefix 2>&1 | Out-String)
+          Write-Output $out
+          if ($out -notmatch 'desktop app was installed before') { Write-Error 'expected the GUI to be kept'; exit 1 }
+      - name: Dry run prints the plan without git, cargo or a checkout (offline)
+        shell: pwsh
+        run: |
+          # Simulate a machine that has neither git nor cargo and is not a
+          # checkout: -DryRun must still print the whole plan (and must not
+          # clone anything).
+          $tools = Join-Path ([System.IO.Path]::GetTempPath()) ("ft-tools-" + [Guid]::NewGuid().ToString('N'))
+          $workdir = Join-Path ([System.IO.Path]::GetTempPath()) ("ft-work-" + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $tools, $workdir -Force | Out-Null
+          foreach ($t in @('uname', 'id', 'dirname', 'basename', 'mktemp', 'head', 'tr', 'sed', 'cat', 'grep', 'rm', 'mkdir')) {
+            $found = Get-Command $t -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { New-Item -ItemType SymbolicLink -Path (Join-Path $tools $t) -Target $found.Source -Force | Out-Null }
+          }
+          $pwsh = (Get-Command pwsh | Select-Object -First 1).Source
+          New-Item -ItemType SymbolicLink -Path (Join-Path $tools 'pwsh') -Target $pwsh -Force | Out-Null
+          $script = (Resolve-Path ./install.ps1).Path
+          $env:FAST_TEXT_LATEST_TAG = 'v0.3.0'
+          Push-Location $workdir
+          try {
+            $out = & env "PATH=$tools" (Join-Path $tools 'pwsh') -NoProfile -File $script -DryRun -FromSource 2>&1 | Out-String
+          } finally { Pop-Location }
+          Write-Output $out
+          if ($out -notmatch 'Cloning https://github\.com') { Write-Error 'expected a clone plan'; exit 1 }
+          if ($out -notmatch 'cargo build --release') { Write-Error 'expected a build plan'; exit 1 }

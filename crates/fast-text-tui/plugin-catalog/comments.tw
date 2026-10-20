@@ -1,0 +1,143 @@
+# Comment toggling for Fast Text — a TextWrite plugin.
+#
+# The editor's built-in Ctrl+/ only knows the current language's marker. This
+# plugin carries a table of its own, toggles per line, and can comment or
+# un-comment whole blocks — useful when the language detection guessed wrong
+# or when a selection mixes languages.
+#
+# The marker table maps a language name (as the editor reports it) to the
+# line prefix and, where they exist, the block delimiters.
+
+fn cmt_marker_for(lang) {
+    let table = {
+        "Rust": ["//", "/*", "*/"],
+        "Go": ["//", "/*", "*/"],
+        "Java": ["//", "/*", "*/"],
+        "C": ["//", "/*", "*/"],
+        "C++": ["//", "/*", "*/"],
+        "C#": ["//", "/*", "*/"],
+        "JavaScript": ["//", "/*", "*/"],
+        "TypeScript": ["//", "/*", "*/"],
+        "Kotlin": ["//", "/*", "*/"],
+        "Swift": ["//", "/*", "*/"],
+        "Scala": ["//", "/*", "*/"],
+        "Dart": ["//", "/*", "*/"],
+        "Zig": ["//", "/*", "*/"],
+        "Python": ["#", "", ""],
+        "Ruby": ["#", "=begin", "=end"],
+        "Shell": ["#", "", ""],
+        "Perl": ["#", "", ""],
+        "YAML": ["#", "", ""],
+        "TOML": ["#", "", ""],
+        "Haskell": ['--', '{-', '-}'],
+        "Lua": ['--', '--[[', ']]'],
+        "SQL": ["--", "/*", "*/"],
+        "HTML": ["", "<!--", "-->"],
+        "XML": ["", "<!--", "-->"],
+        "CSS": ["", "/*", "*/"],
+        "make": ["#", "", ""],
+        "Makefile": ["#", "", ""],
+        "Dockerfile": ["#", "", ""],
+        "R": ["#", "", ""],
+        "MATLAB": ["%", "", ""],
+        "TeX": ["%", "", ""],
+        "Fortran": ["!", "", ""],
+        "INI": ["#", "", ""],
+    }
+    if has(table, lang) {
+        return table[lang]
+    }
+    return ["#", "", ""]
+}
+
+fn cmt_line_comment() {
+    if not has_selection {
+        message("Select some lines to comment first")
+        return
+    }
+    let marker = cmt_marker_for(language)[0]
+    if marker is "" {
+        message("No line marker known for " + language + " — try a block comment")
+        return
+    }
+    let prefix = marker + " "
+    let out = []
+    for l in lines(selected_text) {
+        if starts_with(trim(l), prefix) or trim(l) is marker {
+            push(out, l)
+        } else if trim(l) is "" {
+            push(out, l)
+        } else {
+            push(out, prefix + l)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Comments: toggle line comments", "Comment or un-comment the selected lines for the current language", "cmt_line_comment")
+
+fn cmt_block_comment() {
+    if not has_selection {
+        message("Select some text to wrap in a block comment first")
+        return
+    }
+    let m = cmt_marker_for(language)
+    let open = m[1]
+    let close = m[2]
+    if open is "" {
+        message("No block marker known for " + language)
+        return
+    }
+    let body = selected_text
+    delete_selection()
+    insert(open + "\n" + body + "\n" + close)
+}
+command_with_desc("Comments: wrap in block comment", "Wrap the selection in a block comment for the current language", "cmt_block_comment")
+
+fn cmt_uncomment() {
+    if not has_selection {
+        message("Select some commented lines to un-comment first")
+        return
+    }
+    let out = []
+    for l in lines(selected_text) {
+        let t = l
+        # Strip a leading line marker and one following space.
+        let m = cmt_marker_for(language)[0]
+        if m is not "" and starts_with(trim(t), m + " ") {
+            let at = index_of(t, m)
+            t = trim(slice(t, at + len(m) + 1, len(t)))
+            push(out, t)
+        } else if m is not "" and trim(t) is m {
+            push(out, "")
+        } else {
+            push(out, t)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Comments: un-comment", "Strip the line comment marker from the selected lines", "cmt_uncomment")
+
+fn cmt_banner() {
+    # A comment banner: the text centred between marker dashes.
+    if not has_selection {
+        message("Select the banner text first")
+        return
+    }
+    let marker = cmt_marker_for(language)[0]
+    if marker is "" {
+        message("No line marker known for " + language)
+        return
+    }
+    let text = trim(selected_text)
+    let width = len(text) + 8
+    let dash = "-"
+    let rule = marker + " " + map(range(width), fn(i) {
+        return dash
+    }).join("")
+    let body = marker + "  " + upper(text) + "  " + dash
+    delete_selection()
+    insert(rule + "\n" + body + "\n" + rule)
+}
+command_with_desc("Comments: banner", "Turn the selection into a commented banner with rules above and below", "cmt_banner")

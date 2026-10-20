@@ -4,7 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -38,10 +38,14 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     let prompt_active = app.prompt.is_active();
 
     let mut constraints = Vec::new();
+    constraints.push(Constraint::Length(1)); // top bar
     if show_tabs {
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Min(1));
+    if app.console_visible {
+        constraints.push(Constraint::Length(10)); // console panel
+    }
     constraints.push(Constraint::Length(1));
     if prompt_active {
         constraints.push(Constraint::Length(1));
@@ -53,12 +57,19 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         .split(area);
 
     let mut idx = 0;
+    draw_top_bar(app, frame, chunks[idx]);
+    idx += 1;
     if show_tabs {
         draw_tabs(app, frame, chunks[idx]);
         idx += 1;
     }
     let content = chunks[idx];
     idx += 1;
+    if app.console_visible {
+        let console_area = chunks[idx];
+        idx += 1;
+        draw_console(app, frame, console_area);
+    }
     let status = chunks[idx];
     idx += 1;
 
@@ -138,8 +149,18 @@ fn draw_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
         .style(Style::default().bg(app.theme.status_bg));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    app.sidebar.set_view_height(inner.height as usize);
-    app.sidebar.set_area(area, inner);
+    // While the create prompt is open it claims the panel's last row.
+    let (list_area, prompt_area) = if app.sidebar.is_creating() && inner.height > 1 {
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+        (split[0], Some(split[1]))
+    } else {
+        (inner, None)
+    };
+    app.sidebar.set_view_height(list_area.height as usize);
+    app.sidebar.set_area(area, list_area);
 
     if inner.width == 0 || inner.height == 0 {
         return;
@@ -156,7 +177,7 @@ fn draw_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let selected = app.sidebar.selected();
     let scroll = app.sidebar.scroll();
-    let rows = inner.height as usize;
+    let rows = list_area.height as usize;
     let mut lines: Vec<Line> = Vec::new();
     for (i, entry) in app
         .sidebar
@@ -200,14 +221,45 @@ fn draw_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(app.theme.status_bg)),
-        inner,
+        list_area,
     );
 
+    // The inline new-file / new-folder prompt at the bottom of the panel.
+    if let (Some(label), Some(row)) = (app.sidebar.create_label(), prompt_area) {
+        let input = app.sidebar.create_input();
+        let error = app.sidebar.create_error();
+        let mut spans = vec![Span::styled(
+            format!(" {label}: "),
+            Style::default()
+                .fg(app.theme.status_accent)
+                .add_modifier(Modifier::BOLD),
+        )];
+        spans.push(Span::styled(
+            input.to_string(),
+            Style::default().fg(app.theme.foreground),
+        ));
+        // A visible cursor block after the typed name.
+        spans.push(Span::styled(
+            "▌",
+            Style::default().fg(app.theme.status_accent),
+        ));
+        if let Some(error) = error {
+            spans.push(Span::styled(
+                format!("  {error}"),
+                Style::default().fg(app.theme.error),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(app.theme.status_bg)),
+            row,
+        );
+    }
+
     // Point the terminal cursor at the selected row while focused.
-    if focused {
+    if focused && prompt_area.is_none() {
         let row = selected.saturating_sub(scroll) as u16;
-        if row < inner.height {
-            frame.set_cursor_position((inner.x, inner.y + row));
+        if row < list_area.height {
+            frame.set_cursor_position((list_area.x, list_area.y + row));
         }
     }
 }
@@ -847,7 +899,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+Tab  Next tab    Ctrl+W  Close tab"),
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),
-        Line::from(" Alt+U  Check for updates"),
+        Line::from(" Alt+C  Console  ·  Alt+U  Check for updates"),
         Line::from(" Shift+Arrows  Select  Ctrl+←/→  Word move"),
         Line::from(" Alt+↑/↓  Move line   Alt+Shift+↑/↓  Add cursors"),
         Line::from(" Ctrl+D  Select next occurrence"),
@@ -856,7 +908,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Shift+Ctrl+F / Alt+F  Find in files"),
         Line::from(" Alt+N  Rename   Shift+Ctrl+I  Format   Ctrl+.  Code actions"),
         Line::from(" F6  Record macro  F7  Replay macro"),
-        Line::from(" Sidebar: ↑↓ ←→ Enter   r reload  . hidden"),
+        Line::from(" Sidebar: ↑↓ ←→ Enter   n file  N folder  r reload  . hidden"),
         Line::from(" Mouse: click a file or tab; ✕ closes a tab"),
         Line::from(" Config: $XDG_CONFIG_HOME/fast-text/config.toml — rebind keys here"),
         Line::from(""),
@@ -1509,6 +1561,45 @@ impl Position2 {
     fn xy(x: u16, y: u16) -> Position {
         Position::new(x, y)
     }
+}
+
+/// Draws the top bar with the app name and version.
+fn draw_top_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let text = format!(" fast-text v{} ", env!("CARGO_PKG_VERSION"));
+    let paragraph = Paragraph::new(Line::from(Span::styled(
+        text,
+        Style::default()
+            .bg(app.theme.status_accent)
+            .fg(app.theme.foreground)
+            .add_modifier(Modifier::BOLD),
+    )));
+    frame.render_widget(paragraph, area);
+}
+
+/// Draws the bottom console panel.
+fn draw_console(app: &mut App, frame: &mut Frame, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Console ")
+        .border_style(Style::default().fg(app.theme.gutter));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let text_height = inner.height as usize;
+    let output = &app.console_output;
+    let visible_start = output.len().saturating_sub(text_height.saturating_sub(1));
+    let mut lines: Vec<Line> = output[visible_start..]
+        .iter()
+        .map(|l| Line::from(l.as_str()))
+        .collect();
+    lines.push(Line::from(Span::styled(
+        format!("> {}", app.console_input),
+        Style::default().fg(app.theme.status_accent),
+    )));
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, inner);
 }
 
 #[cfg(test)]

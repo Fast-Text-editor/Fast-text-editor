@@ -1,0 +1,165 @@
+# Extra Markdown touches for Fast Text — a TextWrite plugin.
+#
+# The built-in Markdown pro plugin covers headings, links and tables. This one
+# goes further: task-list checkboxes with the author's initials, footnotes,
+# definition lists, aligned reference-style links, and a table of contents
+# built from the headings in the document.
+
+fn mdx_mark_task() {
+    if not has_selection {
+        message("Select the task lines first")
+        return
+    }
+    let out = []
+    for l in lines(selected_text) {
+        let t = trim(l)
+        if starts_with(t, "- [") {
+            push(out, l)
+        } else if t is "" {
+            push(out, l)
+        } else {
+            push(out, "- [ ] " + l)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Markdown: task list", "Turn the selected lines into unchecked task-list items", "mdx_mark_task")
+
+fn mdx_footnote() {
+    # Numbered footnotes across the selection: [^1], [^2], ...
+    if not has_selection {
+        message("Select the lines that need footnotes first")
+        return
+    }
+    let n = 0
+    let out = []
+    let refs = []
+    for l in lines(selected_text) {
+        if trim(l) is "" {
+            push(out, l)
+            continue
+        }
+        n += 1
+        push(out, l + "[^" + str(n) + "]")
+        push(refs, "[^" + str(n) + "]: ")
+    }
+    delete_selection()
+    insert(join(out, "\n") + "\n\n" + join(refs, "\n"))
+}
+command_with_desc("Markdown: footnotes", "Append footnote markers to each selected line and a reference block", "mdx_footnote")
+
+fn mdx_definition_list() {
+    # Turn "term: definition" lines into a Markdown definition list.
+    if not has_selection {
+        message("Select lines shaped like \"term: definition\" first")
+        return
+    }
+    let out = []
+    for l in lines(selected_text) {
+        let at = index_of(l, ":")
+        if at > 0 {
+            let term = trim(slice(l, 0, at))
+            let def = trim(slice(l, at + 1, len(l)))
+            push(out, term)
+            push(out, ":   " + def)
+        } else if trim(l) is "" {
+            push(out, l)
+        } else {
+            push(out, l)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Markdown: definition list", "Convert \"term: definition\" lines into a definition list", "mdx_definition_list")
+
+fn mdx_reference_links() {
+    # Collect [text][id] references and emit a reference block at the end.
+    if not has_selection {
+        message("Select the text containing [text][id] links first")
+        return
+    }
+    let body = selected_text
+    let seen = {}
+    let order = []
+    let at = 0
+    while at < len(body) {
+        let open = index_of(slice(body, at, len(body)), "[")
+        if open < 0 {
+            break
+        }
+        let base = at + open
+        let close = index_of(slice(body, base, len(body)), "]")
+        if close < 0 {
+            break
+        }
+        let id_open = base + close + 1
+        if id_open + 1 < len(body) and slice(body, id_open, id_open + 1) is "[" {
+            let id_close = index_of(slice(body, id_open, len(body)), "]")
+            if id_close > 1 {
+                let id = slice(body, id_open + 1, id_open + id_close)
+                if not has(seen, id) {
+                    seen[id] = true
+                    push(order, id)
+                }
+                at = id_open + id_close
+                continue
+            }
+        }
+        at = base + close + 1
+    }
+    if len(order) is 0 {
+        message("No [text][id] links found")
+        return
+    }
+    let refs = []
+    for id in order {
+        push(refs, "[" + id + "]: https://example.com/" + id)
+    }
+    delete_selection()
+    insert(body + "\n\n" + join(refs, "\n"))
+}
+command_with_desc("Markdown: reference links", "Collect [text][id] links and append a reference-style link block", "mdx_reference_links")
+
+fn mdx_toc() {
+    # A table of contents from the document's headings.
+    let body = document_text
+    let heads = []
+    for l in lines(body) {
+        let t = trim(l)
+        let level = 0
+        while level < len(t) and slice(t, level, level + 1) is "#" {
+            level += 1
+        }
+        if level >= 1 and level <= 6 and level < len(t) and slice(t, level, level + 1) is " " {
+            let title = trim(slice(t, level + 1, len(t)))
+            # Strip trailing hashes used for closed ATX headings.
+            while len(title) > 0 and slice(title, len(title) - 1, len(title)) is "#" {
+                title = trim(slice(title, 0, len(title) - 1))
+            }
+            let indent = map(range(level - 1), fn(i) {
+                return "  "
+            }).join("")
+            let slug = lower(replace(replace(title, " ", "-"), ",", ""))
+            push(heads, indent + "- [" + title + "](#" + slug + ")")
+        }
+    }
+    if len(heads) is 0 {
+        message("No headings found in the document")
+        return
+    }
+    insert(join(heads, "\n") + "\n\n")
+}
+command_with_desc("Markdown: table of contents", "Insert a linked table of contents built from the document's headings", "mdx_toc")
+
+fn mdx_strikethrough() {
+    if not has_selection {
+        message("Select the text to strike through first")
+        return
+    }
+    let body = selected_text
+    delete_selection()
+    insert("~~" + body + "~~")
+}
+command_with_desc("Markdown: strikethrough", "Wrap the selection in ~~strikethrough~~ markers", "mdx_strikethrough")

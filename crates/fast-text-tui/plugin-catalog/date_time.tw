@@ -1,0 +1,130 @@
+# Date format converter for Fast Text — a TextWrite plugin.
+#
+# TextWrite has no clock, so instead of pretending to know today this plugin
+# reads a date out of the selection and rewrites it in other shapes:
+# ISO (2026-10-19), long (Monday, 19 October 2026), short (Oct 19, 2026),
+# slashy (19/10/2026) and compact (20261019). It also reports the day of
+# the week and the month's length for any date — leap years and Zeller's
+# congruence included, so 1970-01-01 comes out as a Thursday.
+
+let dt_months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+let dt_months_short = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+let dt_days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+fn dt_pad(n) {
+    if n < 10 {
+        return "0" + str(n)
+    }
+    return str(n)
+}
+
+# Day of week for a y/m/d triple, 0 = Sunday, via Zeller's congruence.
+fn dt_weekday(y, m, d) {
+    if m < 3 {
+        m = m + 12
+        y = y - 1
+    }
+    let k = y % 100
+    let j = y / 100
+    let h = (d + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7
+    # Zeller counts 0 = Saturday; shift to 0 = Sunday.
+    return (h + 6) % 7
+}
+
+fn dt_leap(y) {
+    return y % 4 is 0 and (y % 100 is not 0 or y % 400 is 0)
+}
+
+fn dt_days_in(y, m) {
+    let lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if m is 2 and dt_leap(y) {
+        return 29
+    }
+    return lengths[m - 1]
+}
+
+# Reads "YYYY-MM-DD" (also -slash- or dot-separated) from the selection.
+fn dt_parse() {
+    if not has_selection {
+        message("Select a date like 2026-10-19 first")
+        return {}
+    }
+    let raw = trim(selected_text)
+    let sep = "-"
+    if index_of(raw, "/") >= 0 {
+        sep = "/"
+    } else if index_of(raw, ".") >= 0 {
+        sep = "."
+    }
+    let parts = split(raw, sep)
+    if len(parts) is not 3 {
+        message("Could not read a date from \"" + raw + "\"")
+        return {}
+    }
+    let y = int(parts[0])
+    let m = int(parts[1])
+    let d = int(parts[2])
+    if m < 1 or m > 12 or d < 1 or d > dt_days_in(y, m) {
+        message(str(m) + "/" + str(d) + " is not a valid date in " + str(y))
+        return {}
+    }
+    return {"y": y, "m": m, "d": d}
+}
+
+fn dt_replace_selection(text) {
+    delete_selection()
+    insert(text)
+}
+
+fn dt_to_iso() {
+    let p = dt_parse()
+    if has(p, "y") {
+        dt_replace_selection(str(p["y"]) + "-" + dt_pad(p["m"]) + "-" + dt_pad(p["d"]))
+    }
+}
+command_with_desc("Date: to ISO", "Rewrite the selected date as YYYY-MM-DD", "dt_to_iso")
+
+fn dt_to_long() {
+    let p = dt_parse()
+    if has(p, "y") {
+        let name = dt_days[dt_weekday(p["y"], p["m"], p["d"])]
+        dt_replace_selection(name + ", " + str(p["d"]) + " " + dt_months[p["m"] - 1] + " " + str(p["y"]))
+    }
+}
+command_with_desc("Date: to long form", "Rewrite the selected date as \"Weekday, D Month YYYY\"", "dt_to_long")
+
+fn dt_to_short() {
+    let p = dt_parse()
+    if has(p, "y") {
+        dt_replace_selection(dt_months_short[p["m"] - 1] + " " + str(p["d"]) + ", " + str(p["y"]))
+    }
+}
+command_with_desc("Date: to short form", "Rewrite the selected date as \"Mon D, YYYY\"", "dt_to_short")
+
+fn dt_to_slashes() {
+    let p = dt_parse()
+    if has(p, "y") {
+        dt_replace_selection(dt_pad(p["d"]) + "/" + dt_pad(p["m"]) + "/" + str(p["y"]))
+    }
+}
+command_with_desc("Date: to DD/MM/YYYY", "Rewrite the selected date with slashes and leading zeros", "dt_to_slashes")
+
+fn dt_to_compact() {
+    let p = dt_parse()
+    if has(p, "y") {
+        dt_replace_selection(str(p["y"]) + dt_pad(p["m"]) + dt_pad(p["d"]))
+    }
+}
+command_with_desc("Date: to YYYYMMDD", "Rewrite the selected date as a compact eight-digit stamp", "dt_to_compact")
+
+fn dt_weekday_of() {
+    let p = dt_parse()
+    if has(p, "y") {
+        let extra = ""
+        if dt_leap(p["y"]) {
+            extra = " — leap year"
+        }
+        message(dt_days[dt_weekday(p["y"], p["m"], p["d"])] + " — " + str(dt_days_in(p["y"], p["m"])) + " days in that month" + extra)
+    }
+}
+command_with_desc("Date: day of week", "Report which weekday the selected date falls on", "dt_weekday_of")
