@@ -1,0 +1,75 @@
+# TODO report for Fast Text — a TextWrite plugin.
+#
+# Scans the whole document for TODO, FIXME, HACK, XXX and NOTE markers and
+# inserts a grouped report at the cursor, with the line number of every hit.
+# The report is plain text, so it can be saved, committed or deleted again.
+
+let todo_marks = ["TODO", "FIXME", "HACK", "XXX", "NOTE"]
+
+# Groups the document's marker lines by marker, in a marker -> rows map.
+fn todo_buckets() {
+    let buckets = {}
+    for mark in todo_marks {
+        buckets[mark] = []
+    }
+    let rows = lines(document_text)
+    let number = 0
+    for row in rows {
+        number += 1
+        let hay = upper(row)
+        for mark in todo_marks {
+            if index_of(hay, mark) >= 0 {
+                push(buckets[mark], "  line " + str(number) + ": " + trim(row))
+                break
+            }
+        }
+    }
+    return buckets
+}
+
+fn todo_total(buckets) {
+    let total = 0
+    for mark in todo_marks {
+        total += len(buckets[mark])
+    }
+    return total
+}
+
+fn todo_report() {
+    let buckets = todo_buckets()
+    let total = todo_total(buckets)
+    if total == 0 {
+        message("No TODO, FIXME, HACK, XXX or NOTE markers found")
+        return
+    }
+    let out = ["TODO report — " + str(total) + " marker(s)"]
+    for mark in todo_marks {
+        let rows = buckets[mark]
+        if len(rows) > 0 {
+            push(out, "")
+            push(out, mark + " (" + str(len(rows)) + ")")
+            for row in rows {
+                push(out, row)
+            }
+        }
+    }
+    insert(join(out, "\n") + "\n")
+}
+
+fn todo_counts() {
+    let buckets = todo_buckets()
+    let parts = []
+    for mark in todo_marks {
+        if len(buckets[mark]) > 0 {
+            push(parts, mark + " " + str(len(buckets[mark])))
+        }
+    }
+    if len(parts) == 0 {
+        message("No markers found")
+        return
+    }
+    message(join(parts, "  ·  "))
+}
+
+command_with_desc("TODO: report at cursor", "Insert a grouped report of every TODO/FIXME/NOTE marker", "todo_report")
+command_with_desc("TODO: count markers", "Show how many markers of each kind the document has", "todo_counts")

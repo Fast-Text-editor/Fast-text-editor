@@ -4,7 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -65,10 +65,12 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     }
     let content = chunks[idx];
     idx += 1;
+    let mut console_area: Option<Rect> = None;
     if app.console_visible {
-        let console_area = chunks[idx];
+        let area = chunks[idx];
         idx += 1;
-        draw_console(app, frame, console_area);
+        draw_console(app, frame, area);
+        console_area = Some(area);
     }
     let status = chunks[idx];
     idx += 1;
@@ -117,6 +119,20 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     // The self-update modal sits on top of everything.
     if app.update.is_dialog_open() {
         draw_update_dialog(app, frame, area);
+    }
+
+    // The console owns the cursor when it is focused, but it is drawn before
+    // the editor (which also places the cursor), so do it last. Modals and the
+    // command prompt win over the panel.
+    if let Some(console_area) = console_area {
+        let modal_open = app.picker.is_open()
+            || app.show_help
+            || app.plugin_manager.is_open()
+            || app.update.is_dialog_open()
+            || prompt_active;
+        if !modal_open {
+            place_console_cursor(app, frame, console_area);
+        }
     }
 }
 
@@ -899,7 +915,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+Tab  Next tab    Ctrl+W  Close tab"),
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),
-        Line::from(" Alt+C  Console  ·  Alt+U  Check for updates"),
+        Line::from(" Alt+C  Terminal  ·  Alt+U  Check for updates"),
         Line::from(" Shift+Arrows  Select  Ctrl+←/→  Word move"),
         Line::from(" Alt+↑/↓  Move line   Alt+Shift+↑/↓  Add cursors"),
         Line::from(" Ctrl+D  Select next occurrence"),
@@ -1583,23 +1599,51 @@ fn draw_console(app: &mut App, frame: &mut Frame, area: Rect) {
     }
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Console ")
-        .border_style(Style::default().fg(app.theme.gutter));
+        .title(" Terminal ")
+        .title(Line::from(" Alt+C close  ·  ↑↓ history  ·  Ctrl+L clear ").right_aligned())
+        .border_style(Style::default().fg(app.theme.gutter))
+        .title_style(Style::default().fg(app.theme.gutter));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let text_height = inner.height as usize;
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    // The prompt takes the last two rows: the directory header and the line
+    // the user types on. Everything above scrolls.
+    let prompt_rows = inner.height.min(2) as usize;
+    let scroll_rows = inner.height as usize - prompt_rows;
     let output = &app.console_output;
-    let visible_start = output.len().saturating_sub(text_height.saturating_sub(1));
+    let visible_start = output.len().saturating_sub(scroll_rows);
     let mut lines: Vec<Line> = output[visible_start..]
         .iter()
-        .map(|l| Line::from(l.as_str()))
+        .map(|line| Line::from(line.as_str()))
         .collect();
-    lines.push(Line::from(Span::styled(
-        format!("> {}", app.console_input),
-        Style::default().fg(app.theme.status_accent),
-    )));
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
+    if prompt_rows >= 2 {
+        lines.push(Line::from(Span::styled(
+            app.console_prompt_header(),
+            Style::default().fg(app.theme.gutter),
+        )));
+    }
+    let lead = app.console_prompt_lead();
+    lines.push(Line::from(vec![
+        Span::styled(lead, Style::default().fg(app.theme.status_accent)),
+        Span::raw(app.console_input.as_str()),
+    ]));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Places the terminal cursor at the end of the console input.
+fn place_console_cursor(app: &App, frame: &mut Frame, area: Rect) {
+    if area.width < 3 || area.height < 3 {
+        return;
+    }
+    let inner_x = area.x + 1;
+    let inner_width = area.width - 2;
+    let lead = app.console_prompt_lead();
+    let x = inner_x + lead.chars().count() as u16 + app.console_input.chars().count() as u16;
+    let x = x.min(inner_x + inner_width - 1);
+    frame.set_cursor_position((x, area.y + area.height - 2));
 }
 
 #[cfg(test)]
@@ -1794,5 +1838,18 @@ mod tests {
             colors.contains(&expected),
             "comment color {expected:?} missing — tokens after line 1 are not highlighted"
         );
+    }
+
+    #[test]
+    fn the_console_draws_a_two_line_prompt() {
+        let mut app = App::new(vec![]);
+        app.toggle_console();
+        app.console_cwd = std::env::temp_dir();
+        app.console_input = "echo hi".to_string();
+        let out = render(&mut app, 80, 30);
+        assert!(out.contains("┌──("), "prompt header missing:\n{out}");
+        assert!(out.contains('㉿'), "prompt host glyph missing:\n{out}");
+        assert!(out.contains("└─$ echo hi"), "prompt line missing:\n{out}");
+        assert!(out.contains("Alt+C close"), "console hint missing:\n{out}");
     }
 }

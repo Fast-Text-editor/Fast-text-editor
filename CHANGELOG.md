@@ -4,6 +4,41 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-23
+
+### Added
+
+- **Terminal panel** (TUI): `Alt+C` now opens a real working terminal prompt.
+  It keeps a working directory with a Kali-style two-line prompt,
+  `┌──(user㉿host)-[~/dir]` / `└─$`, so `cd` persists: every command starts in
+  the directory the previous one ended in, and the prompt follows along. `↑`/`↓`
+  walk the command history, `Ctrl+W` deletes a word, `Ctrl+U` clears the line,
+  `Ctrl+L` clears the scrollback, and the terminal cursor sits at the end of the
+  input. Each command still runs with `sh -c` (variables and aliases do not
+  persist); output stays text-only and is capped at 1000 lines. If the tracked
+  directory disappears, the panel falls back to `$HOME` and says so.
+- **Six new catalog plugins**, written in TextWrite, bringing the catalog to
+  eighteen: **Box drawing** (`boxes.tw`, single/rounded/double/heavy frames),
+  **Align** (`align.tw`, line up on `=`, `:`, `=>` or `|`), **Ciphers**
+  (`cipher.tw`, ROT13 and Atbash), **TODO report** (`todo_report.tw`, grouped
+  markers with line numbers), **Wrap** (`wrap.tw`, reflow to 72/80 columns or
+  unwrap paragraphs) and **Path tools** (`path_tools.tw`, separators, base
+  names, directories, quoting).
+- Console tests for prompt shortening, the shell's cwd sentinel, history
+  navigation, the `Ctrl+W`/`Ctrl+U`/`Ctrl+L` shortcuts and prompt rendering,
+  plus behavior tests for every new catalog plugin (ROT13 output, box padding,
+  alignment, wrapping, TODO line numbers and path handling).
+- **Termux/Android support** in `install.sh`: it detects Termux and builds from
+  source instead of downloading a glibc Linux archive, which installs but
+  cannot execute on Android's bionic libc. The installer also falls back to
+  `~/.cache` when `/tmp` does not exist, as on Android. CI covers both paths.
+
+### Changed
+
+- The `Alt+C` panel is now titled **Terminal** (help text, README and welcome
+  buffer updated); its scrollback is rendered without soft wrapping so the
+  prompt always stays on the last two rows.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added
@@ -153,7 +188,8 @@ The first public release.
 - **Releases**: GitHub Actions builds `fast-text-<target>.tar.gz` for Linux and
   macOS (x86_64 and aarch64) on every `v*` tag.
 
-[Unreleased]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Fast-Text-editor/Fast-text-editor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Fast-Text-editor/Fast-text-editor/releases/tag/v0.1.0

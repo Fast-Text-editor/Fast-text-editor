@@ -64,6 +64,24 @@ jobs:
       - run: sh -n install.sh
       - run: sh install.sh --help
       - run: sh install.sh --dry-run --from-source
+      - name: Termux falls back to a native build (offline)
+        run: |
+          # Termux is Android: the glibc Linux archives install but cannot
+          # execute ("required file not found"). The plan must build instead.
+          out="$(TERMUX_VERSION=0.118 sh install.sh --dry-run --prefix "$(mktemp -d)" 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "Termux/Android detected"
+          printf '%s\n' "$out" | grep -q -- "-linux-android"
+          printf '%s\n' "$out" | grep -q "would run: cargo build"
+          if printf '%s\n' "$out" | grep -q "Downloading"; then
+            echo "Termux must not download a glibc build" >&2
+            exit 1
+          fi
+      - name: Missing /tmp falls back to a writable cache (offline)
+        run: |
+          home="$(mktemp -d)"
+          TMPDIR="$home/missing" HOME="$home" sh install.sh --dry-run --from-source >/dev/null 2>&1
+          test -d "$home/.cache"
       - name: Version check finds an update (offline)
         run: |
           prefix="$(mktemp -d)"

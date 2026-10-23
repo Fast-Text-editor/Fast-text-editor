@@ -53,6 +53,22 @@ die() {
     exit 1
 }
 
+# True on Termux/Android. The prebuilt Linux archives link glibc, while
+# Android uses bionic, so they install cleanly and then fail to execute
+# with "required file not found". There the installer must build natively.
+is_termux() {
+    if [ -n "${TERMUX_VERSION:-}" ]; then
+        return 0
+    fi
+    if [ -d /data/data/com.termux/files/usr ]; then
+        return 0
+    fi
+    if [ "$(uname -o 2>/dev/null || true)" = "Android" ]; then
+        return 0
+    fi
+    return 1
+}
+
 # Runs a command, honouring --dry-run.
 run() {
     if [ "$DRY_RUN" = 1 ]; then
@@ -117,6 +133,10 @@ Re-running the installer over an existing installation updates that copy in
 place (keeping the desktop app if it was installed before): --check reports
 whether a newer release exists, and --update installs it only when there is
 one.
+
+On Termux/Android the prebuilt Linux binaries cannot run (they link glibc,
+not Android's bionic libc), so the installer builds from source there:
+  pkg install rust git
 
 Examples:
   curl -fsSL .../install.sh | sh
@@ -322,7 +342,13 @@ detect_target() {
     arch="$(uname -m)"
 
     case "$os" in
-    Linux) os_part="unknown-linux-gnu" ;;
+    Linux)
+        if is_termux; then
+            os_part="linux-android"
+        else
+            os_part="unknown-linux-gnu"
+        fi
+        ;;
     Darwin) os_part="apple-darwin" ;;
     MINGW* | MSYS* | CYGWIN* | Windows_NT)
         # Git Bash, MSYS2 and Cygwin can drive a source build, but the
@@ -865,6 +891,18 @@ update_now() {
 
 main() {
     parse_args "$@"
+
+    # Termux needs a native build: installing a glibc Linux binary there
+    # succeeds but the result cannot be executed. Do it before dir detection
+    # so dry runs describe what would really happen.
+    if [ "$FROM_SOURCE" != 1 ] && is_termux; then
+        log "Termux/Android detected: prebuilt Linux binaries need glibc, so this builds from source"
+        if ! command -v cargo >/dev/null 2>&1; then
+            log "Install the Rust toolchain first with: pkg install rust git"
+        fi
+        FROM_SOURCE=1
+    fi
+
     adopt_existing_location
     resolve_dirs
 
@@ -884,7 +922,15 @@ main() {
         adopt_existing_install
     fi
 
-    TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fast-text-install.XXXXXX")" ||
+    # Android/Termux has no /tmp; fall back to ~/.cache there (and anywhere
+    # else TMPDIR points at something that does not exist).
+    tmp_base="${TMPDIR:-/tmp}"
+    if [ ! -d "$tmp_base" ]; then
+        tmp_base="$HOME/.cache"
+        mkdir -p "$tmp_base" ||
+            die "no usable temporary directory; set TMPDIR"
+    fi
+    TMP_DIR="$(mktemp -d "$tmp_base/fast-text-install.XXXXXX")" ||
         die "could not create a temporary directory"
     # Clean up on any exit. A trap on INT/TERM that only removes the
     # directory would leave the script running after Ctrl-C, so those

@@ -1,0 +1,98 @@
+# Path tools for Fast Text — a TextWrite plugin.
+#
+# Treats the selected lines as paths: switch the separator, keep only the file
+# name or directory, and quote or unquote paths that contain spaces. Handy for
+# turning copied `ls` output into a script, or a Windows path into a POSIX one.
+
+let path_quote = '"'
+
+fn path_norm(line) {
+    return replace(line, "\\", "/")
+}
+
+fn path_basename(line) {
+    let norm = path_norm(line)
+    let parts = split(norm, "/")
+    let i = len(parts) - 1
+    while i >= 0 and parts[i] is "" {
+        i -= 1
+    }
+    if i < 0 {
+        return norm
+    }
+    return parts[i]
+}
+
+fn path_dirname(line) {
+    let norm = path_norm(line)
+    let end = len(norm)
+    while end > 1 and slice(norm, end - 1, end) is "/" {
+        end -= 1
+    }
+    let i = end - 1
+    while i >= 0 and not (slice(norm, i, i + 1) is "/") {
+        i -= 1
+    }
+    if i < 0 {
+        return "."
+    }
+    if i == 0 {
+        return "/"
+    }
+    let out = slice(norm, 0, i)
+    while len(out) > 1 and slice(out, len(out) - 1, len(out)) is "/" {
+        out = slice(out, 0, len(out) - 1)
+    }
+    return out
+}
+
+fn path_apply(f) {
+    if not has_selection {
+        message("Select the paths to transform first")
+        return
+    }
+    let out = map(lines(selected_text), f)
+    delete_selection()
+    insert(join(out, "\n"))
+}
+
+fn path_forward() {
+    path_apply(fn(line) { return path_norm(line) })
+}
+
+fn path_backward() {
+    path_apply(fn(line) { return replace(path_norm(line), "/", "\\") })
+}
+
+fn path_base() {
+    path_apply(fn(line) { return path_basename(line) })
+}
+
+fn path_dir() {
+    path_apply(fn(line) { return path_dirname(line) })
+}
+
+fn path_quote_lines() {
+    path_apply(fn(line) { return path_quote + replace(line, path_quote, "\\" + path_quote) + path_quote })
+}
+
+fn path_unquote() {
+    path_apply(fn(line) {
+        let text = trim(line)
+        if len(text) >= 2 {
+            let head = slice(text, 0, 1)
+            let tail = slice(text, len(text) - 1, len(text))
+            if (head is "\"" and tail is "\"") or (head is "'" and tail is "'") {
+                return slice(text, 1, len(text) - 1)
+            }
+        }
+        return text
+    })
+}
+
+command_with_desc("Paths: forward slashes", "Turn backslashes into forward slashes", "path_forward")
+command_with_desc("Paths: backslashes", "Turn forward slashes into backslashes", "path_backward")
+command_with_desc("Paths: base names", "Keep only the file name of each selected path", "path_base")
+command_with_desc("Paths: directories", "Keep only the directory of each selected path", "path_dir")
+command_with_desc("Paths: quote", "Wrap each selected path in double quotes", "path_quote_lines")
+command_with_desc("Paths: unquote", "Strip a matching pair of quotes from each path", "path_unquote")

@@ -1,0 +1,76 @@
+# Paragraph wrapping for Fast Text — a TextWrite plugin.
+#
+# Reflows the selection to a given column, or unwraps it back into one long
+# line per paragraph. Wrapping is greedy and counts characters, so it suits
+# prose, commit messages and Markdown.
+
+fn wrp_reflow(text, width) {
+    let out = []
+    let line = ""
+    for word in words(text) {
+        if line is "" {
+            line = word
+        } else if len(line) + 1 + len(word) <= width {
+            line = line + " " + word
+        } else {
+            push(out, line)
+            line = word
+        }
+    }
+    if line is not "" {
+        push(out, line)
+    }
+    return out
+}
+
+fn wrp_apply(width) {
+    if not has_selection {
+        message("Select the paragraph to wrap first")
+        return
+    }
+    let out = join(wrp_reflow(selected_text, width), "\n")
+    delete_selection()
+    insert(out)
+}
+
+fn wrp_unwrap() {
+    if not has_selection {
+        message("Select the paragraphs to unwrap first")
+        return
+    }
+    let out = []
+    let para = []
+    for row in lines(selected_text) {
+        if trim(row) is "" {
+            if len(para) > 0 {
+                push(out, join(para, " "))
+                para = []
+            }
+            if len(out) > 0 and out[len(out) - 1] is not "" {
+                push(out, "")
+            }
+        } else {
+            push(para, trim(row))
+        }
+    }
+    if len(para) > 0 {
+        push(out, join(para, " "))
+    }
+    while len(out) > 0 and trim(out[len(out) - 1]) is "" {
+        pop(out)
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+
+fn wrp_80() {
+    wrp_apply(80)
+}
+
+fn wrp_72() {
+    wrp_apply(72)
+}
+
+command_with_desc("Wrap: 80 columns", "Reflow the selection to 80 columns", "wrp_80")
+command_with_desc("Wrap: 72 columns", "Reflow the selection to 72 columns", "wrp_72")
+command_with_desc("Wrap: unwrap paragraphs", "Join each selected paragraph back into one line", "wrp_unwrap")

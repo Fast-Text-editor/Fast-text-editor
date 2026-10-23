@@ -1,0 +1,94 @@
+# Alignment for Fast Text — a TextWrite plugin.
+#
+# Lines up the selected rows on a delimiter, padding the left-hand side so the
+# `=`, `:`, `=>` or `|` all start in the same column. Rows without the
+# delimiter (comments, blank lines) are left exactly as they are.
+
+fn aln_ltrim(text) {
+    let start = 0
+    while start < len(text) and (slice(text, start, start + 1) is " " or slice(text, start, start + 1) is "\t") {
+        start += 1
+    }
+    return slice(text, start, len(text))
+}
+
+fn aln_rtrim(text) {
+    let end = len(text)
+    while end > 0 and (slice(text, end - 1, end) is " " or slice(text, end - 1, end) is "\t") {
+        end -= 1
+    }
+    return slice(text, 0, end)
+}
+
+fn aln_pad(text, width) {
+    let out = text
+    repeat width - len(text) times {
+        out = out + " "
+    }
+    return out
+}
+
+fn aln_apply(sep) {
+    if not has_selection {
+        message("Select the lines to align first")
+        return
+    }
+    let rows = lines(selected_text)
+    if len(rows) < 2 {
+        message("Select at least two lines to align")
+        return
+    }
+    # Measure first: only rows that contain the delimiter take part, so a
+    # trailing comment or blank line can't stretch the whole block.
+    let widest = 0
+    let hits = 0
+    for row in rows {
+        let at = index_of(row, sep)
+        if at >= 0 {
+            let left = aln_rtrim(slice(row, 0, at))
+            if len(left) > widest {
+                widest = len(left)
+            }
+            hits += 1
+        }
+    }
+    if hits < 2 {
+        message("Need at least two selected lines containing `" + sep + "`")
+        return
+    }
+    let out = []
+    for row in rows {
+        let at = index_of(row, sep)
+        if at < 0 {
+            push(out, row)
+            continue
+        }
+        let left = aln_rtrim(slice(row, 0, at))
+        let right = aln_ltrim(slice(row, at + len(sep), len(row)))
+        let line = aln_pad(left, widest) + " " + sep + " " + right
+        push(out, aln_rtrim(line))
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+
+fn aln_equals() {
+    aln_apply("=")
+}
+
+fn aln_colon() {
+    aln_apply(":")
+}
+
+fn aln_arrow() {
+    aln_apply("=>")
+}
+
+fn aln_pipe() {
+    aln_apply("|")
+}
+
+command_with_desc("Align: on =", "Line the selected rows up on their first =", "aln_equals")
+command_with_desc("Align: on :", "Line the selected rows up on their first :", "aln_colon")
+command_with_desc("Align: on =>", "Line the selected rows up on their first =>", "aln_arrow")
+command_with_desc("Align: on |", "Line the selected rows up on their first |", "aln_pipe")

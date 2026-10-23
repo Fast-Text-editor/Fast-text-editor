@@ -449,6 +449,15 @@ pub struct App {
     pub console_input: String,
     /// Console output lines.
     pub console_output: Vec<String>,
+    /// The directory the console's shell commands run in. `cd` updates it, so
+    /// the next command starts where the previous one finished.
+    pub console_cwd: PathBuf,
+    /// Previous console commands, oldest first.
+    pub console_history: Vec<String>,
+    /// The history entry Up/Down is showing, if any.
+    console_history_index: Option<usize>,
+    /// The half-typed command set aside while browsing history.
+    console_draft: String,
     /// Actions scheduled for future frames by a timed automation.
     pending: VecDeque<(Instant, EditorAction)>,
     /// Sorted names of every selectable language (curated + imported).
@@ -495,6 +504,83 @@ pub struct App {
     update_tx: Option<Sender<UpdateEvent>>,
 }
 
+/// The sentinel the console's shell prints after every command so the editor
+/// can learn the directory the command ended in.
+const CONSOLE_CWD_SENTINEL: &str = "__fast_text_cwd__";
+
+/// The user's home directory, or `/` when `HOME` is unset.
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Shortens a directory for the prompt: `~`, `~/sub`, or the full path.
+fn prompt_dir(cwd: &Path, home: Option<&Path>) -> String {
+    if let Some(home) = home {
+        if cwd == home {
+            return "~".to_string();
+        }
+        if let Ok(rest) = cwd.strip_prefix(home) {
+            if !rest.as_os_str().is_empty() {
+                return format!("~/{}", rest.display());
+            }
+        }
+    }
+    if cwd.as_os_str().is_empty() {
+        "?".to_string()
+    } else {
+        cwd.display().to_string()
+    }
+}
+
+/// The user name shown in the console prompt.
+fn prompt_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "user".to_string())
+}
+
+/// The host name shown in the console prompt.
+fn prompt_host() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|host| !host.trim().is_empty())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|host| host.trim().to_string())
+                .filter(|host| !host.is_empty())
+        })
+        .unwrap_or_else(|| "localhost".to_string())
+}
+
+/// Splits captured console stdout into display lines and the working directory
+/// reported by the trailing sentinel, dropping the sentinel itself.
+fn split_console_output(stdout: &str) -> (Vec<String>, Option<PathBuf>) {
+    let mut lines: Vec<String> = stdout.lines().map(str::to_string).collect();
+    let mut cwd = None;
+    if let Some(index) = lines
+        .iter()
+        .rposition(|line| line.starts_with(CONSOLE_CWD_SENTINEL))
+    {
+        let path = lines[index][CONSOLE_CWD_SENTINEL.len()..].to_string();
+        if !path.is_empty() {
+            cwd = Some(PathBuf::from(path));
+        }
+        lines.truncate(index);
+        // The shell puts a newline in front of the sentinel; drop the empty
+        // line it leaves so ordinary output is not followed by a blank row.
+        if lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+    }
+    (lines, cwd)
+}
+
 impl App {
     /// Builds an editor with the built-in defaults. `App::with_config` is the
     /// same thing with a user's `config.toml` applied on top.
@@ -524,7 +610,7 @@ impl App {
         }
         if editors.is_empty() {
             editors.push(Editor::from_text(
-                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// In the explorer: n = new file  ·  N = new folder  ·  Enter opens.\n// Alt+C opens the console  ·  type shell commands, Esc closes it.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
+                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// In the explorer: n = new file  ·  N = new folder  ·  Enter opens.\n// Alt+C opens the terminal  ·  cd persists between commands, Esc closes it.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
                 LanguageId::Rust,
             ));
         }
@@ -557,6 +643,10 @@ impl App {
             console_visible: false,
             console_input: String::new(),
             console_output: Vec::new(),
+            console_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            console_history: Vec::new(),
+            console_history_index: None,
+            console_draft: String::new(),
             language_names: all_language_names(),
             pending: VecDeque::new(),
             sidebar,
@@ -587,23 +677,64 @@ impl App {
         self.console_visible = !self.console_visible;
     }
 
+    /// The Kali-style first prompt line: `┌──(user㉿host)-[~/dir]`.
+    pub fn console_prompt_header(&self) -> String {
+        format!(
+            "┌──({}㉿{})-[{}]",
+            prompt_user(),
+            prompt_host(),
+            prompt_dir(&self.console_cwd, Some(home_dir().as_path()))
+        )
+    }
+
+    /// The line the user types a command on.
+    pub fn console_prompt_lead(&self) -> &'static str {
+        "└─$ "
+    }
+
     /// Executes the current console input as a shell command.
+    ///
+    /// Every command runs in `console_cwd`, and the shell reports the directory
+    /// it ended in, so `cd` persists from one command to the next. Each command
+    /// still gets a fresh shell, so variables and aliases do not.
     pub fn run_console_command(&mut self) {
         let input = self.console_input.trim().to_string();
         if input.is_empty() {
             return;
         }
-        self.console_output.push(format!("$ {input}"));
+        self.console_output.push(self.console_prompt_header());
+        self.console_output
+            .push(format!("{}{input}", self.console_prompt_lead()));
+        self.remember_console_command(&input);
+
+        if !self.console_cwd.is_dir() {
+            let home = home_dir();
+            self.console_output.push(format!(
+                "(that directory no longer exists; running in {})",
+                home.display()
+            ));
+            self.console_cwd = home;
+        }
+
+        // Run the command, then print the sentinel carrying the shell's final
+        // working directory. A command that calls `exit` never reaches it; the
+        // directory is then left unchanged.
+        let script = format!(
+            "{input}\n__fast_text_status=$?\nprintf '\\n{CONSOLE_CWD_SENTINEL}%s\\n' \"$PWD\"\nexit $__fast_text_status\n"
+        );
         let output = std::process::Command::new("sh")
             .arg("-c")
-            .arg(&input)
+            .arg(&script)
+            .current_dir(&self.console_cwd)
             .output();
         match output {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                for line in stdout.lines() {
-                    self.console_output.push(line.to_string());
+                let (lines, cwd) = split_console_output(&stdout);
+                self.console_output.extend(lines);
+                if let Some(cwd) = cwd {
+                    self.console_cwd = cwd;
                 }
                 for line in stderr.lines() {
                     self.console_output.push(line.to_string());
@@ -618,17 +749,94 @@ impl App {
                 .push(format!("error running command: {e}")),
         }
         self.console_input.clear();
+        self.console_history_index = None;
+        self.console_draft.clear();
         if self.console_output.len() > 1000 {
             self.console_output.drain(0..500);
         }
     }
 
+    /// Records a command in the history, skipping an immediate repeat.
+    fn remember_console_command(&mut self, input: &str) {
+        if self
+            .console_history
+            .last()
+            .is_some_and(|last| last == input)
+        {
+            return;
+        }
+        self.console_history.push(input.to_string());
+        if self.console_history.len() > 200 {
+            self.console_history.remove(0);
+        }
+    }
+
+    /// Steps back through the command history (Up).
+    fn console_history_previous(&mut self) {
+        if self.console_history.is_empty() {
+            return;
+        }
+        let index = match self.console_history_index {
+            Some(0) => return,
+            Some(index) => index - 1,
+            None => {
+                self.console_draft = std::mem::take(&mut self.console_input);
+                self.console_history.len() - 1
+            }
+        };
+        self.console_history_index = Some(index);
+        self.console_input = self.console_history[index].clone();
+    }
+
+    /// Steps forward through the command history, back to the draft (Down).
+    fn console_history_next(&mut self) {
+        let Some(index) = self.console_history_index else {
+            return;
+        };
+        if index + 1 < self.console_history.len() {
+            self.console_history_index = Some(index + 1);
+            self.console_input = self.console_history[index + 1].clone();
+        } else {
+            self.console_history_index = None;
+            self.console_input = std::mem::take(&mut self.console_draft);
+        }
+    }
+
+    /// Deletes the last word of the console input (Ctrl+W).
+    fn delete_console_word(&mut self) {
+        let trimmed = self.console_input.trim_end();
+        let cut = trimmed
+            .rfind(char::is_whitespace)
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        self.console_input.truncate(cut);
+    }
+
     /// Handles a key press while the console panel is focused.
     pub fn handle_console_key(&mut self, key: KeyEvent) -> bool {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('c') if alt => {
                 self.console_visible = false;
+            }
+            KeyCode::Char('c') if ctrl => {
+                // Like a shell: discard the half-typed line.
+                self.console_input.clear();
+                self.console_history_index = None;
+            }
+            KeyCode::Char('l') if ctrl => {
+                self.console_output.clear();
+            }
+            KeyCode::Char('u') if ctrl => {
+                self.console_input.clear();
+                self.console_history_index = None;
+            }
+            KeyCode::Char('w') if ctrl => {
+                self.delete_console_word();
+            }
+            KeyCode::Char(c) if !ctrl && !alt => {
+                self.console_input.push(c);
             }
             KeyCode::Esc => {
                 self.console_visible = false;
@@ -639,8 +847,11 @@ impl App {
             KeyCode::Backspace => {
                 self.console_input.pop();
             }
-            KeyCode::Char(c) => {
-                self.console_input.push(c);
+            KeyCode::Up => {
+                self.console_history_previous();
+            }
+            KeyCode::Down => {
+                self.console_history_next();
             }
             _ => {}
         }
@@ -5094,5 +5305,89 @@ mod tests {
         app.handle_key(key(KeyCode::Char('x')));
         assert_eq!(app.console_input, "x");
         assert_eq!(app.editor().doc.text(), "doc");
+    }
+
+    #[test]
+    fn console_prompt_dir_shortens_the_home_directory() {
+        let home = Path::new("/home/kali");
+        assert_eq!(prompt_dir(home, Some(home)), "~");
+        assert_eq!(prompt_dir(Path::new("/home/kali/src"), Some(home)), "~/src");
+        assert_eq!(prompt_dir(Path::new("/tmp"), Some(home)), "/tmp");
+        // A path that only shares a prefix must not look like it is inside home.
+        assert_eq!(
+            prompt_dir(Path::new("/home/kali2"), Some(home)),
+            "/home/kali2"
+        );
+        assert_eq!(prompt_dir(Path::new("/"), None), "/");
+    }
+
+    #[test]
+    fn the_console_prompt_names_user_host_and_directory() {
+        let mut app = empty_app();
+        app.console_cwd = home_dir();
+        let header = app.console_prompt_header();
+        assert_eq!(app.console_prompt_lead(), "└─$ ");
+        assert!(header.starts_with("┌──("), "{header}");
+        assert!(header.contains('㉿'), "{header}");
+        assert!(header.ends_with(")-[~]"), "{header}");
+    }
+
+    #[test]
+    fn console_output_parsing_strips_the_cwd_sentinel() {
+        let stdout = "hello\nworld\n\n__fast_text_cwd__/tmp/place\n";
+        let (lines, cwd) = split_console_output(stdout);
+        assert_eq!(lines, vec!["hello", "world"]);
+        assert_eq!(cwd.as_deref(), Some(Path::new("/tmp/place")));
+
+        // Output with no sentinel (a command that called `exit`) is untouched.
+        let (lines, cwd) = split_console_output("just output\n");
+        assert_eq!(lines, vec!["just output"]);
+        assert_eq!(cwd, None);
+    }
+
+    #[test]
+    fn console_history_browses_with_up_and_down() {
+        let mut app = empty_app();
+        app.toggle_console();
+        app.console_history = vec!["ls".to_string(), "pwd".to_string()];
+        app.console_input = "draft".to_string();
+
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.console_input, "pwd");
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.console_input, "ls");
+        // Already at the oldest entry: Up stays put.
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.console_input, "ls");
+
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.console_input, "pwd");
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.console_input, "draft", "the draft comes back");
+    }
+
+    #[test]
+    fn console_shortcuts_edit_the_input() {
+        let mut app = empty_app();
+        app.toggle_console();
+        for c in "make release now".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(ctrl('w'));
+        assert_eq!(app.console_input, "make release ");
+        app.handle_key(ctrl('u'));
+        assert_eq!(app.console_input, "");
+        for c in "oops".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(ctrl('c'));
+        assert_eq!(app.console_input, "", "Ctrl+C discards the line");
+
+        app.console_output.push("old".to_string());
+        app.handle_key(ctrl('l'));
+        assert!(
+            app.console_output.is_empty(),
+            "Ctrl+L clears the scrollback"
+        );
     }
 }

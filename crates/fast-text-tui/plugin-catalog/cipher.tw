@@ -1,0 +1,57 @@
+# Letter ciphers for Fast Text — a TextWrite plugin.
+#
+# ROT13 (its own inverse) and Atbash (a = z, b = y, …), which are useful for
+# hiding spoilers in notes and for puzzle work. Case is preserved; everything
+# that is not a letter passes through untouched.
+
+let ciph_lower = "abcdefghijklmnopqrstuvwxyz"
+
+# Builds a character map from a rotated alphabet, adding the upper-case pairs.
+fn ciph_table(rotated) {
+    let table = {}
+    let from = chars(ciph_lower)
+    let to = chars(rotated)
+    let i = 0
+    while i < len(from) and i < len(to) {
+        table[from[i]] = to[i]
+        table[upper(from[i])] = upper(to[i])
+        i += 1
+    }
+    return table
+}
+
+fn ciph_rot13_table() {
+    return ciph_table(slice(ciph_lower, 13, 26) + slice(ciph_lower, 0, 13))
+}
+
+fn ciph_atbash_table() {
+    return ciph_table(reverse(ciph_lower))
+}
+
+fn ciph_apply(table) {
+    if not has_selection {
+        message("Select the text to transform first")
+        return
+    }
+    let out = []
+    for c in chars(selected_text) {
+        if has(table, c) {
+            push(out, table[c])
+        } else {
+            push(out, c)
+        }
+    }
+    delete_selection()
+    insert(join(out, ""))
+}
+
+fn ciph_rot13() {
+    ciph_apply(ciph_rot13_table())
+}
+
+fn ciph_atbash() {
+    ciph_apply(ciph_atbash_table())
+}
+
+command_with_desc("Cipher: ROT13", "Rotate every selected letter by thirteen places", "ciph_rot13")
+command_with_desc("Cipher: Atbash", "Mirror every selected letter (a↔z, b↔y)", "ciph_atbash")

@@ -1,0 +1,84 @@
+# Box drawing for Fast Text — a TextWrite plugin.
+#
+# Wraps the selected lines in a Unicode box: single, rounded, double or heavy.
+# Handy for headers, notices and ASCII-art-friendly documentation. Every line
+# keeps its own indentation; the box is padded to the widest one.
+
+# [name, top-left, top-right, bottom-left, bottom-right, horizontal, vertical]
+let box_styles = [
+    ["single", "┌", "┐", "└", "┘", "─", "│"],
+    ["rounded", "╭", "╮", "╰", "╯", "─", "│"],
+    ["double", "╔", "╗", "╚", "╝", "═", "║"],
+    ["heavy", "┏", "┓", "┗", "┛", "━", "┃"],
+]
+
+fn box_repeat(ch, n) {
+    let out = ""
+    repeat n times {
+        out = out + ch
+    }
+    return out
+}
+
+fn box_width(rows) {
+    let widest = 0
+    for row in rows {
+        if len(row) > widest {
+            widest = len(row)
+        }
+    }
+    return widest
+}
+
+fn box_render(text, style) {
+    let rows = lines(text)
+    # Selecting whole lines often drags in the newline that ended the previous
+    # one; drop that single empty row so the box hugs the text.
+    if len(rows) > 0 and trim(rows[0]) is "" {
+        rows = slice(rows, 1, len(rows))
+    }
+    let widest = box_width(rows)
+    let bar = box_repeat(style[5], widest + 2)
+    let out = []
+    push(out, style[1] + bar + style[2])
+    for row in rows {
+        push(out, style[6] + " " + row + box_repeat(" ", widest - len(row)) + " " + style[6])
+    }
+    push(out, style[3] + bar + style[4])
+    return out
+}
+
+fn box_apply(style) {
+    if not has_selection {
+        message("Select the text to put in a box first")
+        return
+    }
+    if trim(selected_text) is "" {
+        message("The selection is empty")
+        return
+    }
+    let out = join(box_render(selected_text, style), "\n")
+    delete_selection()
+    insert(out)
+}
+
+fn box_single() {
+    box_apply(box_styles[0])
+}
+
+fn box_rounded() {
+    box_apply(box_styles[1])
+}
+
+fn box_double() {
+    box_apply(box_styles[2])
+}
+
+fn box_heavy() {
+    box_apply(box_styles[3])
+}
+
+command_with_desc("Box: single line", "Surround the selected lines with a single-line box", "box_single")
+command_with_desc("Box: rounded corners", "Surround the selected lines with a rounded box", "box_rounded")
+command_with_desc("Box: double line", "Surround the selected lines with a double-line box", "box_double")
+command_with_desc("Box: heavy line", "Surround the selected lines with a heavy box", "box_heavy")

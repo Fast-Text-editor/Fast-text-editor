@@ -26,6 +26,12 @@ highlight a plugin and press `Enter`.
 | `date_time.tw` | Read a date from the selection and rewrite it as ISO, long, short, slash or compact form, with the weekday |
 | `identifier_case.tw` | Convert names between snake, camel, Pascal, kebab, CONSTANT and dot.case, or split them into words |
 | `word_frequency.tw` | Count the selection's words, rank them, chart them as a comment block, estimate reading time |
+| `boxes.tw` | Surround the selection with a single, rounded, double or heavy Unicode box |
+| `align.tw` | Line the selected rows up on their first `=`, `:`, `=>` or `|` |
+| `cipher.tw` | ROT13 and Atbash over the selection, preserving case |
+| `todo_report.tw` | Group every TODO/FIXME/HACK/XXX/NOTE in the document into a report with line numbers |
+| `wrap.tw` | Reflow the selection to 72 or 80 columns, or unwrap paragraphs |
+| `path_tools.tw` | Switch path separators, keep base names or directories, quote or unquote paths |
 
 ## Writing your own
 

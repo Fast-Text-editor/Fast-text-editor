@@ -121,6 +121,10 @@ Prebuilt archives are published for **x86_64 and aarch64 Linux** (glibc) and
 automatically. Releases are produced by `.github/workflows/release.yml` when a
 `v*` tag is pushed.
 
+**Termux/Android** is detected automatically: the prebuilt Linux archives link
+glibc, which cannot run against Android's bionic libc, so the installer builds
+natively instead. Install the toolchain first with `pkg install rust git`.
+
 ## Updates
 
 Fast Text knows when a newer release exists. At startup it asks GitHub once a
@@ -176,7 +180,7 @@ desktop app has the same dialog under **Help → Check for updates**.
 | `Ctrl+/` | Toggle comment | `Ctrl+Shift+D` | Duplicate line |
 | `Ctrl+Shift+K` | Delete line | `Alt+↑` / `Alt+↓` | Move line up / down |
 | `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro |
-| `Alt+U` | Check for updates | `Alt+C` | Console panel |
+| `Alt+U` | Check for updates | `Alt+C` | Terminal panel |
 
 A few chords are terminal-dependent (`Ctrl+Shift+<letter>`, `Ctrl+.`). Every
 action also has a palette entry and a `[keys]` id, so you can rebind it — for
@@ -196,10 +200,15 @@ no slashes or dot-names — and opens the file you just made), `r` reloads, and
 `.` toggles dotfiles. With the mouse you can click a file to open it, click a
 tab to switch, and click a tab's `✕` to close it.
 
-`Alt+C` opens a **console panel** at the bottom of the window: type any shell
-command and press `Enter` to run it with `sh -c`, with its output and exit code
-captured below the prompt (up to 1000 lines). `Esc` or `Alt+C` closes the panel
-and returns to the editor.
+`Alt+C` opens a **terminal panel** at the bottom of the window. It keeps a
+working directory with a `┌──(user㉿host)-[~/dir]` / `└─$` prompt, so `cd`
+persists from one command to the next and every command starts where the last
+one finished. `↑`/`↓` walk the command history, `Ctrl+W` deletes a word,
+`Ctrl+U` clears the line, `Ctrl+C` discards it, `Ctrl+L` clears the scrollback,
+and `Esc` or `Alt+C` closes the panel. Each command runs with `sh -c`, so
+variables and aliases do not survive between commands (start a shell with
+`bash` if you need that);
+output is captured as text and limited to 1000 lines.
 
 `Ctrl+Shift+F` (or `Alt+F`) opens **find in files**: type a query, `Tab` toggles
 case sensitivity, and `Enter` on a result jumps straight to the hit. Search runs
@@ -397,13 +406,17 @@ Toggling a plugin takes effect immediately and is remembered in
 also reachable with the mouse: click a row to select it, then click it again to
 toggle (or install) it.
 
-The catalog ships twelve plugins, all written in TextWrite and readable under
+The catalog ships eighteen plugins, all written in TextWrite and readable under
 `crates/fast-text-tui/plugin-catalog/`: **Theme pack**, **Case and lines**,
 **Statistics**, **Markdown pro**, **Whitespace**, **Snippets**, **Comments**
 (toggle line comments for the right language), **CSV tools** (sort, swap and
 prune columns), **Markdown extras** (tables, fences, task lists), **Date
 converter** (ISO ⇄ US ⇄ long-form dates, weekday included), **Identifier
-cases** (camelCase ⇄ snake_case ⇄ kebab-case ⇄ paths), and **Word frequency**.
+cases** (camelCase ⇄ snake_case ⇄ kebab-case ⇄ paths), **Word frequency**,
+**Box drawing** (single, rounded, double and heavy boxes), **Align** (line up on
+`=`, `:`, `=>` or `|`), **Ciphers** (ROT13 and Atbash), **TODO report** (group
+every marker with line numbers), **Wrap** (reflow to 72/80 columns or unwrap),
+and **Path tools** (separators, base names, directories, quoting).
 
 ### Themes
 
