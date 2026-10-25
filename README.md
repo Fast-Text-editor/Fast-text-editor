@@ -1,5 +1,5 @@
 # Fast Text
-![Uploading fast.gif…]()
+<img width="1556" height="941" alt="fast" src="https://github.com/user-attachments/assets/78e66a72-a1b1-462f-8183-369c0ff9fb68" />
 
 [![CI](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/ci.yml)
 [![Release](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/release.yml/badge.svg)](https://github.com/Fast-Text-editor/Fast-text-editor/releases)
@@ -9,6 +9,7 @@
 A fast, modern text editor written in Rust. Fast Text is built as a **Cargo
 workspace** with a single powerful engine and thin frontends layered on top, so
 the editor behaves identically everywhere.
+
 
 ## Quick start
 
