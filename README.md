@@ -1,4 +1,5 @@
 # Fast Text
+![Uploading fast.gif…]()
 
 [![CI](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/ci.yml)
 [![Release](https://github.com/Fast-Text-editor/Fast-text-editor/actions/workflows/release.yml/badge.svg)](https://github.com/Fast-Text-editor/Fast-text-editor/releases)
