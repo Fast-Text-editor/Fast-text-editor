@@ -28,11 +28,14 @@ path = "src/bin/ft.rs"
 
 [dependencies]
 crossterm = "0.29.0"
-fast-text-core.workspace = true
+fast-text-core = { workspace = true, features = ["fs"] }
 fast-text-lsp.workspace = true
-fast-text-plugin.workspace = true
+fast-text-plugin = { workspace = true, features = ["rhai"] }
 fast-text-syntax.workspace = true
+fast-text-theme.workspace = true
 fast-text-textwrite.workspace = true
 fast-text-update.workspace = true
 ratatui = "0.30.2"
+serde.workspace = true
+serde_json.workspace = true
 unicode-width.workspace = true

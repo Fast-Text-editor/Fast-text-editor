@@ -1,0 +1,33 @@
+# nord — a built-in Fast Text theme.
+name = "nord"
+dark = true
+
+[ui]
+background = "#2e3440"
+foreground = "#d8dee9"
+gutter = "#4c566a"
+gutter_active = "#eceff4"
+cursor_line = "#3b4252"
+selection = "#434c5e"
+status_bg = "#292e39"
+status_fg = "#d8dee9"
+status_accent = "#88c0d0"
+prompt_bg = "#3b4252"
+tab_active = "#88c0d0"
+tab_inactive = "#4c566a"
+error = "#bf616a"
+warning = "#ebcb8b"
+
+[syntax]
+plain = "#d8dee9"
+keyword = "#81a1c1"
+type = "#8fbcbb"
+function = "#88c0d0"
+string = "#a3be8c"
+number = "#b48ead"
+comment = "#616e88"
+operator = "#81a1c1"
+punctuation = "#d8dee9"
+constant = "#b48ead"
+attribute = "#88c0d0"
+variable = "#d8dee9"

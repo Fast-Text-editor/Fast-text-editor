@@ -69,10 +69,13 @@ static HOST_FUNCTIONS: &[&str] = &[
     "undo",
     "redo",
     "save",
+    "format",
     "set_language",
     "set_cursor_style",
     "set_theme",
     "define_theme",
+    "set_status",
+    "clear_status",
     "wait",
     "command",
     "command_with_desc",
@@ -160,6 +163,7 @@ impl Host for EditorHost {
             "undo" => self.push(EditorAction::Undo),
             "redo" => self.push(EditorAction::Redo),
             "save" => self.push(EditorAction::Save),
+            "format" => self.push(EditorAction::Format),
             "set_language" => {
                 let lang = arg_str(&args, 0, name, span)?;
                 self.push(EditorAction::SetLanguage(lang));
@@ -177,6 +181,11 @@ impl Host for EditorHost {
                 let theme = arg_str(&args, 0, name, span)?;
                 self.push(EditorAction::SetTheme(theme));
             }
+            "set_status" => {
+                let text = arg_str(&args, 0, name, span)?;
+                self.push(EditorAction::SetStatus(Some(text)));
+            }
+            "clear_status" => self.push(EditorAction::SetStatus(None)),
             "define_theme" => {
                 let theme = arg_str(&args, 0, name, span)?;
                 let colors = match args.get(1) {
@@ -505,6 +514,29 @@ impl ScriptHost {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
 
+    /// True when a loaded script defines the lifecycle hook `name`.
+    pub fn has_hook(&self, name: &str) -> bool {
+        matches!(self.interp.get_global(name), Some(Value::Func(_)))
+    }
+
+    /// Runs a lifecycle hook (`on_buffer_open`, `on_buffer_save`, …) against an
+    /// editor snapshot, returning the actions it queued.
+    ///
+    /// A missing hook is not an error; a failing hook is recorded in
+    /// [`ScriptHost::errors`] and produces a message action.
+    pub fn run_hook(&mut self, name: &str, ctx: &EditorContext) -> Vec<EditorAction> {
+        if !self.has_hook(name) {
+            return Vec::new();
+        }
+        self.install_context(ctx);
+        self.queue.borrow_mut().clear();
+        if let Err(e) = self.interp.eval(&format!("{name}()")) {
+            self.errors.push(format!("hook {name}: {e}"));
+            return vec![EditorAction::Message(format!("{name} failed: {e}"))];
+        }
+        std::mem::take(&mut *self.queue.borrow_mut())
+    }
+
     /// Compiles a `.tw` file: parses it and resolves (recursively) every module
     /// it imports, without running anything. The `.tw` extension is optional.
     pub fn compile_file(&mut self, path: &str) -> textwrite::Result<()> {
@@ -609,5 +641,41 @@ fn arg_usize(
             format!("`{name}` expects {} argument(s)", i + 1),
             span,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_and_runs_lifecycle_hooks() {
+        let mut host = ScriptHost::new();
+        host.add_script(
+            "hooks.tw",
+            r#"
+                fn on_buffer_open() {
+                    message("opened")
+                }
+                fn on_buffer_save() {
+                    format()
+                }
+            "#,
+        );
+        assert!(host.errors.is_empty(), "{:?}", host.errors);
+        assert!(host.has_hook("on_buffer_open"));
+        assert!(host.has_hook("on_buffer_save"));
+        assert!(!host.has_hook("on_buffer_close"));
+        assert_eq!(
+            host.run_hook("on_buffer_open", &EditorContext::default()),
+            vec![EditorAction::Message("opened".to_string())]
+        );
+        assert_eq!(
+            host.run_hook("on_buffer_save", &EditorContext::default()),
+            vec![EditorAction::Format]
+        );
+        assert!(host
+            .run_hook("on_buffer_close", &EditorContext::default())
+            .is_empty());
     }
 }

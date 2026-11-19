@@ -112,6 +112,12 @@ impl Buffer {
         self.dirty
     }
 
+    /// Marks the buffer as having unsaved changes (used when a restored undo
+    /// snapshot differs from the file on disk).
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
     /// Marks the buffer as saved.
     pub fn mark_clean(&mut self) {
         self.dirty = false;

@@ -14,7 +14,7 @@ use fast_text_plugin::{CursorStyle, KeyName, KeySpec};
 pub const TEMPLATE: &str = r#"# Fast Text configuration
 #
 # Every setting is optional; delete a line to fall back to the default.
-# Restart, or run "Reload config" from the Ctrl+P palette, to apply changes.
+# Restart, or run "Reload config" from the Ctrl+Shift+P palette, to apply changes.
 
 [editor]
 # bar | block | underline
@@ -27,6 +27,10 @@ theme        = "dark"
 sidebar      = false
 # talk to language servers (the same knob as FAST_TEXT_LSP)
 lsp          = true
+# show LSP messages on a floating row under the line
+inline_diagnostics = true
+# Vim-style Normal/Insert/Visual keys (Alt+V toggles at runtime)
+vim          = false
 # check GitHub for a newer release at startup (the same knob as
 # FAST_TEXT_UPDATE_CHECK=0); Alt+U or "Check for updates" always check
 check_updates = true
@@ -38,7 +42,7 @@ hidden = false
 # Custom keybindings: "key" = "command".
 #
 # The command is either a built-in id (listed below) or any command from the
-# Ctrl+P palette, including plugin commands. A bare letter with no modifier is
+# Ctrl+Shift+P palette, including plugin commands. A bare letter with no modifier is
 # refused, because it would stop you typing that letter.
 #
 # Built-in ids:
@@ -85,6 +89,10 @@ pub struct Config {
     pub show_hidden: bool,
     /// Talk to language servers.
     pub lsp: bool,
+    /// Draw inline diagnostics under the affected line.
+    pub inline_diagnostics: bool,
+    /// Start in Vim Normal mode.
+    pub vim: bool,
     /// Check GitHub for a newer release at startup.
     pub check_updates: bool,
     /// `[keys]` bindings, in file order.
@@ -105,6 +113,8 @@ impl Default for Config {
             sidebar: false,
             show_hidden: false,
             lsp: true,
+            inline_diagnostics: true,
+            vim: false,
             check_updates: true,
             keys: Vec::new(),
             warnings: Vec::new(),
@@ -128,6 +138,12 @@ impl Config {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
         Some(base.join("fast-text").join("config.toml"))
+    }
+
+    /// Where user themes live: `$XDG_CONFIG_HOME/fast-text/themes`, else
+    /// `~/.config/fast-text/themes`.
+    pub fn theme_dir() -> Option<PathBuf> {
+        Config::path().and_then(|p| p.parent().map(|d| d.join("themes")))
     }
 
     /// Loads the config from its usual location.
@@ -240,6 +256,13 @@ impl Config {
                     set_bool(&mut self.sidebar, value, line_no, &mut self.warnings)
                 }
                 "lsp" => set_bool(&mut self.lsp, value, line_no, &mut self.warnings),
+                "inline_diagnostics" => set_bool(
+                    &mut self.inline_diagnostics,
+                    value,
+                    line_no,
+                    &mut self.warnings,
+                ),
+                "vim" => set_bool(&mut self.vim, value, line_no, &mut self.warnings),
                 "check_updates" => {
                     set_bool(&mut self.check_updates, value, line_no, &mut self.warnings)
                 }

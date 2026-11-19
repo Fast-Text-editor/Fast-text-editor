@@ -39,13 +39,91 @@ enum State {
     Ready(Session),
 }
 
+/// How to install one missing language server.
+///
+/// The hint is plain data so it can be shown in the consent dialog and tested
+/// without running anything. Only the user saying yes actually spawns the
+/// installer (see `App::begin_lsp_install`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallHint {
+    /// The language that needs the server.
+    pub language: LanguageId,
+    /// The executable that will be on `PATH` after installing.
+    pub program: String,
+    /// The installer command, ready to spawn (program first).
+    pub command: Vec<String>,
+    /// Where to read more, shown in the dialog.
+    pub docs: &'static str,
+}
+
+impl InstallHint {
+    /// The command as a single shell-like line, for display.
+    pub fn command_line(&self) -> String {
+        self.command.join(" ")
+    }
+}
+
+/// The install recipe for a language, when we know one.
+///
+/// Only languages with a well-known, package-manager install are listed; for
+/// anything else the editor simply stays quiet and keeps working without LSP.
+pub fn install_hint(lang: LanguageId) -> Option<InstallHint> {
+    let (program, command, docs): (&str, &[&str], &str) = match lang.name() {
+        "Rust" => (
+            "rust-analyzer",
+            &["rustup", "component", "add", "rust-analyzer"],
+            "https://rust-analyzer.github.io/manual.html#installation",
+        ),
+        "JavaScript" | "TypeScript" => (
+            "typescript-language-server",
+            &[
+                "npm",
+                "install",
+                "-g",
+                "typescript-language-server",
+                "typescript",
+            ],
+            "https://github.com/typescript-language-server/typescript-language-server",
+        ),
+        "Python" => (
+            "pylsp",
+            &["pip", "install", "python-lsp-server"],
+            "https://github.com/python-lsp/python-lsp-server",
+        ),
+        "Shell" => (
+            "bash-language-server",
+            &["npm", "install", "-g", "bash-language-server"],
+            "https://github.com/bash-lsp/bash-language-server",
+        ),
+        "Go" => (
+            "gopls",
+            &["go", "install", "golang.org/x/tools/gopls@latest"],
+            "https://go.dev/gopls",
+        ),
+        "Ruby" => (
+            "solargraph",
+            &["gem", "install", "solargraph"],
+            "https://solargraph.org/",
+        ),
+        _ => return None,
+    };
+    Some(InstallHint {
+        language: lang,
+        program: program.to_string(),
+        command: command.iter().map(|part| (*part).to_string()).collect(),
+        docs,
+    })
+}
+
 /// Manages language-server sessions for the open buffers.
 #[derive(Default)]
 pub struct LspManager {
     enabled: bool,
     sessions: HashMap<LanguageId, State>,
-    /// Languages for which no server is installed (avoid re-probing).
+    /// Languages for which no server is installed and no offer is pending.
     unsupported: HashSet<LanguageId>,
+    /// Languages we have already offered to install (so we do not nag).
+    offered: HashSet<LanguageId>,
 }
 
 impl LspManager {
@@ -54,6 +132,7 @@ impl LspManager {
             enabled,
             sessions: HashMap::new(),
             unsupported: HashSet::new(),
+            offered: HashSet::new(),
         }
     }
 
@@ -76,26 +155,25 @@ impl LspManager {
 
     /// Starts a server for the buffer's language if needed and syncs the text.
     /// Never blocks.
-    pub fn sync(&mut self, ed: &Editor) {
+    ///
+    /// Returns the language when no server is installed but we know how to
+    /// install one and have not asked the user yet. The caller shows the
+    /// consent dialog; every other path returns `None`.
+    pub fn sync(&mut self, ed: &Editor) -> Option<LanguageId> {
         if !self.enabled || ed.is_untitled() {
-            return;
+            return None;
         }
-        let Some(lsp_id) = ed.language.lsp_id() else {
-            return;
-        };
+        let lsp_id = ed.language.lsp_id()?;
         let lang = ed.language;
-        let Some(path) = ed.doc.path() else {
-            return;
-        };
+        let path = ed.doc.path()?;
 
         // Start the server if we have not tried yet.
         if !self.sessions.contains_key(&lang) {
             if self.unsupported.contains(&lang) {
-                return;
+                return None;
             }
             let Some(spec) = resolve_server(lang) else {
-                self.unsupported.insert(lang);
-                return;
+                return self.offer_for(lang);
             };
             let root = path
                 .parent()
@@ -105,7 +183,7 @@ impl LspManager {
                 .unwrap_or_default();
             self.sessions
                 .insert(lang, State::Starting(spawn_server(spec, root)));
-            return;
+            return None;
         }
 
         // Promote a starting session to ready once the background thread is done.
@@ -123,19 +201,19 @@ impl LspManager {
                 Ok(Err(())) | Err(TryRecvError::Disconnected) => {
                     self.sessions.remove(&lang);
                     self.unsupported.insert(lang);
-                    return;
+                    return None;
                 }
-                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Empty) => return None,
             },
             Some(State::Ready(_)) => {}
-            None => return,
+            None => return None,
         }
 
         // Sync document text.
         let uri = path_to_uri(path);
         let revision = ed.doc.buffer().revision();
         let Some(State::Ready(session)) = self.sessions.get_mut(&lang) else {
-            return;
+            return None;
         };
 
         match session.opened.get(&uri).cloned() {
@@ -161,6 +239,45 @@ impl LspManager {
                 }
             }
         }
+        None
+    }
+
+    /// Decides whether to offer an install for `lang`.
+    ///
+    /// A language is offered once per session, and only when we have a recipe.
+    /// The caller must call [`Self::mark_offered`] when it actually shows the
+    /// dialog; that lets a modal belonging to another language finish first.
+    pub(crate) fn offer_for(&mut self, lang: LanguageId) -> Option<LanguageId> {
+        if install_hint(lang).is_none() {
+            self.unsupported.insert(lang);
+            return None;
+        }
+        if self.offered.contains(&lang) {
+            None
+        } else {
+            Some(lang)
+        }
+    }
+
+    /// Remembers that the offer has been shown (or declined) for `lang`.
+    pub fn mark_offered(&mut self, lang: LanguageId) {
+        self.offered.insert(lang);
+    }
+
+    /// Remembers that the user declined the install, so we do not ask again.
+    pub fn decline(&mut self, lang: LanguageId) {
+        self.offered.insert(lang);
+        self.unsupported.insert(lang);
+    }
+
+    /// Forgets what we knew about `lang`, so the next `sync` probes again.
+    ///
+    /// Called after an install succeeds (or the user retries from the command
+    /// palette), which makes a freshly installed server usable immediately.
+    pub fn retry(&mut self, lang: LanguageId) {
+        self.offered.remove(&lang);
+        self.unsupported.remove(&lang);
+        self.sessions.remove(&lang);
     }
 
     /// Diagnostics the server has published for this buffer.
@@ -388,5 +505,74 @@ mod tests {
         let mgr = LspManager::new(true);
         let ed = Editor::from_text("hello", LanguageId::Plain);
         assert!(mgr.diagnostics(&ed).is_empty());
+    }
+
+    #[test]
+    fn known_languages_have_install_recipes() {
+        for lang in [
+            LanguageId::Rust,
+            LanguageId::TypeScript,
+            LanguageId::Python,
+            LanguageId::Shell,
+            LanguageId::Go,
+            LanguageId::Ruby,
+        ] {
+            let hint = install_hint(lang).unwrap_or_else(|| panic!("no hint for {}", lang.name()));
+            assert!(!hint.command.is_empty());
+            assert!(!hint.program.is_empty());
+            assert!(hint.command_line().starts_with(&hint.command[0]));
+            // The recipe must install the program we will look for on PATH.
+            assert_eq!(
+                hint.program,
+                match lang.name() {
+                    "Rust" => "rust-analyzer",
+                    "TypeScript" => "typescript-language-server",
+                    "Python" => "pylsp",
+                    "Shell" => "bash-language-server",
+                    "Go" => "gopls",
+                    "Ruby" => "solargraph",
+                    other => panic!("unexpected language {other}"),
+                }
+            );
+        }
+        // Languages without a well-known server get no recipe.
+        assert!(install_hint(LanguageId::Plain).is_none());
+        assert!(install_hint(LanguageId::Markdown).is_none());
+    }
+
+    #[test]
+    fn the_javascript_hint_installs_the_typescript_server() {
+        let hint = install_hint(LanguageId::JavaScript).unwrap();
+        assert_eq!(hint.program, "typescript-language-server");
+        assert!(hint.command_line().contains("typescript-language-server"));
+        assert!(hint.command.iter().any(|part| part == "typescript"));
+    }
+
+    #[test]
+    fn a_language_is_offered_once_until_it_is_retried() {
+        let mut mgr = LspManager::new(true);
+        assert_eq!(mgr.offer_for(LanguageId::Rust), Some(LanguageId::Rust));
+        // The manager keeps suggesting it until the caller confirms the dialog.
+        assert_eq!(mgr.offer_for(LanguageId::Rust), Some(LanguageId::Rust));
+        mgr.mark_offered(LanguageId::Rust);
+        assert_eq!(mgr.offer_for(LanguageId::Rust), None);
+        mgr.retry(LanguageId::Rust);
+        assert_eq!(mgr.offer_for(LanguageId::Rust), Some(LanguageId::Rust));
+    }
+
+    #[test]
+    fn a_decline_is_remembered_and_retry_forgets_it() {
+        let mut mgr = LspManager::new(true);
+        mgr.decline(LanguageId::Python);
+        assert_eq!(mgr.offer_for(LanguageId::Python), None);
+        mgr.retry(LanguageId::Python);
+        assert_eq!(mgr.offer_for(LanguageId::Python), Some(LanguageId::Python));
+    }
+
+    #[test]
+    fn languages_without_a_hint_are_never_offered() {
+        let mut mgr = LspManager::new(true);
+        assert_eq!(mgr.offer_for(LanguageId::Plain), None);
+        assert_eq!(mgr.offer_for(LanguageId::Markdown), None);
     }
 }

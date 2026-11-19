@@ -1,0 +1,33 @@
+# tokyo-night — a built-in Fast Text theme.
+name = "tokyo-night"
+dark = true
+
+[ui]
+background = "#1a1b26"
+foreground = "#c0caf5"
+gutter = "#3b4261"
+gutter_active = "#c0caf5"
+cursor_line = "#1f2335"
+selection = "#33467c"
+status_bg = "#16161e"
+status_fg = "#c0caf5"
+status_accent = "#7aa2f7"
+prompt_bg = "#1f2335"
+tab_active = "#7aa2f7"
+tab_inactive = "#3b4261"
+error = "#f7768e"
+warning = "#e0af68"
+
+[syntax]
+plain = "#c0caf5"
+keyword = "#bb9af7"
+type = "#2ac3de"
+function = "#7aa2f7"
+string = "#9ece6a"
+number = "#ff9e64"
+comment = "#565f89"
+operator = "#89ddff"
+punctuation = "#c0caf5"
+constant = "#ff9e64"
+attribute = "#7aa2f7"
+variable = "#c0caf5"

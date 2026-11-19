@@ -156,6 +156,62 @@ pub const CATALOG: &[CatalogPlugin] = &[
                       quote or unquote the selected paths",
         source: include_str!("../plugin-catalog/path_tools.tw"),
     },
+    CatalogPlugin {
+        file_name: "brackets.tw",
+        title: "Smart brackets",
+        description: "Auto-close and wrap with (), [], {} and quotes, stepping over \
+                      an existing closing character",
+        source: include_str!("../plugin-catalog/brackets.tw"),
+    },
+    CatalogPlugin {
+        file_name: "markdown_preview.tw",
+        title: "Markdown preview",
+        description: "Toggle a Markdown buffer into a readable plain-text preview and \
+                      back, with an optional heading outline",
+        source: include_str!("../plugin-catalog/markdown_preview.tw"),
+    },
+    CatalogPlugin {
+        file_name: "status_line.tw",
+        title: "Status formats",
+        description: "Four custom status-line formats driven by editor globals, with \
+                      open/save hooks and an on-demand refresh",
+        source: include_str!("../plugin-catalog/status_line.tw"),
+    },
+    CatalogPlugin {
+        file_name: "toc.tw",
+        title: "Linked TOC",
+        description: "Insert a linked Markdown table of contents with GitHub-style \
+                      anchors, skipping fenced code blocks",
+        source: include_str!("../plugin-catalog/toc.tw"),
+    },
+    CatalogPlugin {
+        file_name: "brace_format.tw",
+        title: "Brace formatter",
+        description: "Indent JSON, CSS and other brace-delimited text or compact it \
+                      to one line, without touching string contents",
+        source: include_str!("../plugin-catalog/brace_format.tw"),
+    },
+    CatalogPlugin {
+        file_name: "sql_case.tw",
+        title: "SQL casing",
+        description: "Upper- or lower-case SQL keywords in a selection while leaving \
+                      identifiers and quoted strings untouched",
+        source: include_str!("../plugin-catalog/sql_case.tw"),
+    },
+    CatalogPlugin {
+        file_name: "markdown_tables.tw",
+        title: "Markdown tables",
+        description: "Turn TSV or CSV rows into an aligned Markdown table and \
+                      re-align an existing pipe table",
+        source: include_str!("../plugin-catalog/markdown_tables.tw"),
+    },
+    CatalogPlugin {
+        file_name: "log_summary.tw",
+        title: "Log summary",
+        description: "Count selected log lines by severity with a sample of each, or \
+                      keep only the error lines",
+        source: include_str!("../plugin-catalog/log_summary.tw"),
+    },
 ];
 
 /// The catalog entry with this file name, if any.
@@ -334,6 +390,182 @@ mod tests {
         assert!(out.contains("TODO (1)"), "{out}");
         assert!(out.contains("FIXME (1)"), "{out}");
         assert!(out.contains("line 1: fn main() {} // TODO tidy"), "{out}");
+    }
+
+    /// Runs one catalog command with a fully custom context.
+    fn actions_for(
+        title: &str,
+        context: &fast_text_plugin::EditorContext,
+    ) -> Vec<fast_text_plugin::EditorAction> {
+        let mut host = fast_text_textwrite::ScriptHost::new();
+        for plugin in CATALOG {
+            host.add_script(plugin.file_name, plugin.source);
+        }
+        assert!(host.errors.is_empty(), "{:?}", host.errors);
+        let actions = host.run_command(title, context);
+        assert!(host.errors.is_empty(), "{title}: {:?}", host.errors);
+        actions
+    }
+
+    fn inserted(title: &str, ctx: &fast_text_plugin::EditorContext) -> String {
+        actions_for(title, ctx)
+            .into_iter()
+            .filter_map(|action| match action {
+                fast_text_plugin::EditorAction::Insert(text) => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn selection_context(text: &str) -> fast_text_plugin::EditorContext {
+        fast_text_plugin::EditorContext {
+            has_selection: true,
+            selected_text: text.to_string(),
+            selection_start: 0,
+            selection_end: text.len(),
+            doc_text: text.to_string(),
+            file_name: "notes.md".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_bracket_plugin_wraps_the_selection_and_parks_the_caret() {
+        let actions = actions_for("Brackets: wrap in ()", &selection_context("hi"));
+        let inserted = actions
+            .iter()
+            .find_map(|action| match action {
+                fast_text_plugin::EditorAction::Insert(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(inserted, "(hi)");
+        assert!(
+            actions.contains(&fast_text_plugin::EditorAction::SetCursor(1)),
+            "the caret belongs between the pair: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn the_brace_formatter_indents_and_compacts_json() {
+        let out = run_with_selection("Format: indent braces", "{\"a\":{\"b\":1},\"c\":[2,3]}");
+        assert!(out.contains("  \"a\": {"), "{out}");
+        assert!(out.contains("    \"b\": 1"), "{out}");
+        assert!(out.lines().count() >= 5, "{out}");
+        let compact =
+            run_with_selection("Format: compact JSON", "{ \"a\" : 1,\n \"b\" : [ 2, 3 ] }");
+        assert_eq!(compact, "{\"a\":1,\"b\":[2,3]}");
+    }
+
+    #[test]
+    fn the_sql_plugin_only_touches_keywords() {
+        let out = run_with_selection(
+            "SQL: upper-case keywords",
+            "select name from t where name = 'select'",
+        );
+        assert_eq!(out, "SELECT name FROM t WHERE name = 'select'");
+        let lower = run_with_selection(
+            "SQL: lower-case keywords",
+            "SELECT * FROM T WHERE x IS NULL",
+        );
+        assert_eq!(lower, "select * from T where x is null");
+    }
+
+    #[test]
+    fn the_table_plugin_builds_aligned_markdown() {
+        let out = run_with_selection("Table: from TSV", "a\tbb\nc\td");
+        assert_eq!(out, "| a | bb |\n| - | -- |\n| c | d  |");
+    }
+
+    #[test]
+    fn the_log_plugin_counts_severities_and_filters_errors() {
+        let log =
+            "2026-01-01 INFO boot\n2026-01-01 ERROR disk full\n2026-01-01 WARN slow\nERROR again";
+        let summary = run_with_selection("Log: summary", log);
+        assert!(summary.contains("Log summary"), "{summary}");
+        assert!(summary.contains("ERROR: 2"), "{summary}");
+        assert!(summary.contains("WARN: 1"), "{summary}");
+        assert_eq!(
+            run_with_selection("Log: errors only", log),
+            "2026-01-01 ERROR disk full\nERROR again"
+        );
+    }
+
+    #[test]
+    fn the_toc_plugin_links_headings_and_skips_code() {
+        let doc = "# Hello World\n\n```md\n# Not a heading\n```\n\n## Getting started\n";
+        let ctx = selection_context(doc);
+        let out = inserted("Outline: insert Markdown TOC", &ctx);
+        assert_eq!(
+            out,
+            "- [Hello World](#hello-world)\n  - [Getting started](#getting-started)"
+        );
+    }
+
+    #[test]
+    fn the_preview_plugin_restores_the_original_source() {
+        let mut host = fast_text_textwrite::ScriptHost::new();
+        for plugin in CATALOG {
+            host.add_script(plugin.file_name, plugin.source);
+        }
+        assert!(host.errors.is_empty(), "{:?}", host.errors);
+        let original = "# Hello\n\n- [x] done\n\n**bold**\n";
+        let ctx = selection_context(original);
+        let actions = host.run_command("Markdown view: toggle preview", &ctx);
+        let preview = actions
+            .iter()
+            .find_map(|action| match action {
+                fast_text_plugin::EditorAction::Insert(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .expect("the preview replaces the buffer");
+        assert!(preview.contains("HELLO"), "{preview}");
+        assert!(preview.contains("☑ done"), "{preview}");
+        assert!(preview.contains("="), "{preview}");
+        let preview_ctx = selection_context(preview);
+        let actions = host.run_command("Markdown view: toggle preview", &preview_ctx);
+        let restored = actions
+            .iter()
+            .find_map(|action| match action {
+                fast_text_plugin::EditorAction::Insert(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .expect("the toggle restores the buffer");
+        assert_eq!(restored, original);
+        assert!(host.errors.is_empty(), "{:?}", host.errors);
+    }
+
+    #[test]
+    fn the_status_plugin_formats_the_status_line() {
+        let ctx = fast_text_plugin::EditorContext {
+            line: 3,
+            col: 4,
+            line_count: 20,
+            language: "Rust".to_string(),
+            file_name: "main.rs".to_string(),
+            doc_text: "one two three four five".to_string(),
+            ..Default::default()
+        };
+        let actions = actions_for("Status: compact", &ctx);
+        assert!(
+            actions.iter().any(|action| match action {
+                fast_text_plugin::EditorAction::SetStatus(Some(text)) =>
+                    text.contains("Ln 4, Col 5") && text.contains("Rust"),
+                _ => false,
+            }),
+            "{actions:?}"
+        );
+        let actions = actions_for("Status: writing", &ctx);
+        assert!(
+            actions.iter().any(|action| match action {
+                fast_text_plugin::EditorAction::SetStatus(Some(text)) =>
+                    text.contains("5 document words"),
+                _ => false,
+            }),
+            "{actions:?}"
+        );
+        assert!(actions_for("Status: restore default", &ctx)
+            .contains(&fast_text_plugin::EditorAction::SetStatus(None)));
     }
 
     #[test]

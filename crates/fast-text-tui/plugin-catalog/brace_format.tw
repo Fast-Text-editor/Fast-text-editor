@@ -1,0 +1,154 @@
+# Brace formatter for Fast Text — a TextWrite plugin.
+#
+# Indents JSON, CSS and other brace-delimited text without a parser, a network
+# call or a third-party dependency. String contents (including escaped quotes)
+# are never touched. Two commands are provided: a readable, indented layout
+# and a compact one-line form.
+#
+# Select the text you want to format, then run Ctrl+Shift+P → "Format: indent braces".
+
+fn js_flush(out, line, depth) {
+    let text = trim(line)
+    if text is '' {
+        return
+    }
+    push(out, ('  ' * depth) + text)
+}
+
+fn js_indent(text) {
+    let out = []
+    let line = ''
+    let depth = 0
+    let in_string = false
+    let escaped = false
+    let pairs = 0
+
+    for c in chars(text) {
+        if in_string {
+            line = line + c
+            if escaped {
+                escaped = false
+            } else if c is '\\' {
+                escaped = true
+            } else if c is '"' {
+                in_string = false
+            }
+            continue
+        }
+        if c is '"' {
+            in_string = true
+            line = line + c
+            continue
+        }
+        if c is '{' or c is '[' {
+            pairs += 1
+            let prefix = trim(line)
+            if ends_with(prefix, ':') {
+                push(out, ('  ' * depth) + prefix + ' ' + c)
+                line = ''
+            } else {
+                js_flush(out, line, depth)
+                line = ''
+            }
+            depth += 1
+            continue
+        }
+        if c is '}' or c is ']' {
+            pairs += 1
+            js_flush(out, line, depth)
+            depth -= 1
+            if depth < 0 {
+                depth = 0
+            }
+            line = c
+            continue
+        }
+        if c is ',' {
+            line = line + c
+            js_flush(out, line, depth)
+            line = ''
+            continue
+        }
+        if c is ':' {
+            if ends_with(line, ' ') {
+                line = slice(line, 0, len(line) - 1)
+            }
+            line = line + ': '
+            continue
+        }
+        if c is '\n' or c is '\r' or c is '\t' {
+            continue
+        }
+        if c is ' ' {
+            if line is not '' and not ends_with(line, ' ') {
+                line = line + ' '
+            }
+            continue
+        }
+        line = line + c
+    }
+    js_flush(out, line, depth)
+    return { text: join(out, '\n'), pairs: pairs }
+}
+
+fn js_compact(text) {
+    let out = ''
+    let in_string = false
+    let escaped = false
+    for c in chars(text) {
+        if in_string {
+            out = out + c
+            if escaped {
+                escaped = false
+            } else if c is '\\' {
+                escaped = true
+            } else if c is '"' {
+                in_string = false
+            }
+            continue
+        }
+        if c is '"' {
+            in_string = true
+            out = out + c
+        } else if c is not '\n' and c is not '\r' and c is not '\t' and c is not ' ' {
+            out = out + c
+        }
+    }
+    return out
+}
+
+fn js_selected() {
+    if not has_selection {
+        message('Select the text to format first')
+        return ''
+    }
+    return selected_text
+}
+
+fn js_apply_indent() {
+    let source = js_selected()
+    if source is '' {
+        return
+    }
+    let result = js_indent(source)
+    if result.pairs is 0 {
+        message('No braces or brackets found in the selection')
+        return
+    }
+    delete_selection()
+    insert(result.text)
+    message("Indented {result.pairs} delimiters")
+}
+
+fn js_apply_compact() {
+    let source = js_selected()
+    if source is '' {
+        return
+    }
+    delete_selection()
+    insert(js_compact(source))
+    message('Compiled to one line')
+}
+
+command_with_desc('Format: indent braces', 'Pretty-print selected JSON or CSS with braces on their own lines', 'js_apply_indent')
+command_with_desc('Format: compact JSON', 'Remove whitespace outside strings to make a one-line document', 'js_apply_compact')

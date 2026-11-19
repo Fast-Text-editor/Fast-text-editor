@@ -1,6 +1,6 @@
 # Case conversions and line operations for Fast Text — a TextWrite plugin.
 #
-# Everything here appears in the Ctrl+P palette. Commands act on the current
+# Everything here appears in the Ctrl+Shift+P palette. Commands act on the current
 # selection and say so when nothing is selected.
 
 # --- Case ------------------------------------------------------------------

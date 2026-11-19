@@ -15,6 +15,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 fast-text-core.workspace = true
 fast-text-syntax.workspace = true
+fast-text-theme.workspace = true
+fast-text-plugin.workspace = true
 wasm-bindgen = "0.2"
 
 [dev-dependencies]

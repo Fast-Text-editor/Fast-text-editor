@@ -1,0 +1,33 @@
+# dark — a built-in Fast Text theme.
+name = "dark"
+dark = true
+
+[ui]
+background = "#1e2126"
+foreground = "#d7dae0"
+gutter = "#4b525e"
+gutter_active = "#c8ccd4"
+cursor_line = "#2a2e38"
+selection = "#3a4455"
+status_bg = "#282c34"
+status_fg = "#d7dae0"
+status_accent = "#61afef"
+prompt_bg = "#2c313a"
+tab_active = "#61afef"
+tab_inactive = "#4b525e"
+error = "#e06c75"
+warning = "#e5c07b"
+
+[syntax]
+plain = "#d7dae0"
+keyword = "#c678dd"
+type = "#e5c07b"
+function = "#61afef"
+string = "#ce9178"
+number = "#d19a66"
+comment = "#6a737d"
+operator = "#56b6c2"
+punctuation = "#9aa5b1"
+constant = "#d19a66"
+attribute = "#e5c07b"
+variable = "#e06c75"

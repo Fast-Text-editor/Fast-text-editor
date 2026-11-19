@@ -1,0 +1,79 @@
+# Log summariser for Fast Text — a TextWrite plugin.
+#
+# Reads a selected log excerpt and reports how many lines belong to each
+# severity, with one representative line per level. A second command extracts
+# only the error lines so they can be pasted into a ticket.
+#
+# Levels are matched case-insensitively anywhere in the line, so it works with
+# syslog, cargo output, journalctl and application logs alike.
+
+let lg_levels = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
+
+fn lg_level_of(line) {
+    let upper_line = upper(line)
+    for level in lg_levels {
+        if contains(upper_line, level) {
+            return level
+        }
+    }
+    return 'OTHER'
+}
+
+fn lg_scan(text) {
+    let counts = {}
+    let samples = {}
+    let errors = []
+    for line in lines(text) {
+        if trim(line) is '' {
+            continue
+        }
+        let level = lg_level_of(line)
+        counts[level] = get(counts, level, 0) + 1
+        if not has(samples, level) {
+            samples[level] = trim(line)
+        }
+        if level is 'ERROR' {
+            push(errors, trim(line))
+        }
+    }
+    return { counts: counts, samples: samples, errors: errors }
+}
+
+fn lg_summary() {
+    if not has_selection {
+        message('Select a log excerpt first')
+        return
+    }
+    let result = lg_scan(selected_text)
+    let out = ['Log summary', '───────────']
+    for level in lg_levels + ['OTHER'] {
+        let n = get(result.counts, level, 0)
+        if n > 0 {
+            let sample = get(result.samples, level, '')
+            push(out, "{level}: {n}  ·  {sample}")
+        }
+    }
+    if len(out) is 2 {
+        message('No log levels found in the selection')
+        return
+    }
+    insert(join(out, '\n'))
+}
+
+fn lg_errors_only() {
+    if not has_selection {
+        message('Select a log excerpt first')
+        return
+    }
+    let result = lg_scan(selected_text)
+    if len(result.errors) is 0 {
+        message('No error lines found')
+        return
+    }
+    delete_selection()
+    insert(join(result.errors, '\n'))
+    message("Kept {len(result.errors)} error lines")
+}
+
+command_with_desc('Log: summary', 'Count log lines by severity with a sample of each', 'lg_summary')
+command_with_desc('Log: errors only', 'Keep only the ERROR lines from the selection', 'lg_errors_only')

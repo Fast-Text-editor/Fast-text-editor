@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Prompt, TabHit};
+use crate::app::{App, EditorHit, PaneLayout, Prompt, SplitDirection, TabHit};
 use crate::plugin_manager::ManagerTab;
 
 const TAB_WIDTH: usize = 4;
@@ -92,14 +92,22 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
 
     app.viewport_rows = editor_area.height;
     app.viewport_cols = editor_area.width.saturating_sub(gutter_width(app));
+    app.editor_area = editor_area;
+    app.editor_hits.clear();
 
-    draw_content(app, frame, editor_area);
+    let focused = app.active;
+    let panes = app.panes.clone();
+    draw_panes(app, frame, &panes, editor_area);
+    if let Some(hit) = app.editor_hits.iter().find(|hit| hit.editor == focused) {
+        app.editor_area = hit.area;
+    }
     draw_status(app, frame, status);
 
     if prompt_active {
         draw_prompt(app, frame, chunks[idx]);
         draw_command_palette(app, frame, chunks[idx]);
         draw_language_palette(app, frame, chunks[idx]);
+        draw_file_palette(app, frame, chunks[idx]);
     }
 
     draw_completion(app, frame, editor_area);
@@ -121,6 +129,11 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         draw_update_dialog(app, frame, area);
     }
 
+    // The language-server install prompt is modal as well.
+    if app.lsp_install.is_dialog_open() {
+        draw_lsp_install_dialog(app, frame, area);
+    }
+
     // The console owns the cursor when it is focused, but it is drawn before
     // the editor (which also places the cursor), so do it last. Modals and the
     // command prompt win over the panel.
@@ -129,6 +142,7 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
             || app.show_help
             || app.plugin_manager.is_open()
             || app.update.is_dialog_open()
+            || app.lsp_install.is_dialog_open()
             || prompt_active;
         if !modal_open {
             place_console_cursor(app, frame, console_area);
@@ -340,7 +354,7 @@ fn draw_completion(app: &App, frame: &mut Frame, content: Rect) {
     );
 }
 
-/// Renders the list of matching commands above the minibuffer for `Ctrl+P`.
+/// Renders the list of matching commands above the minibuffer for `Ctrl+Shift+P`.
 fn draw_command_palette(app: &App, frame: &mut Frame, prompt_area: Rect) {
     let Prompt::Command { input } = &app.prompt else {
         return;
@@ -377,6 +391,53 @@ fn draw_command_palette(app: &App, frame: &mut Frame, prompt_area: Rect) {
                     .fg(app.theme.foreground)
             };
             Line::from(Span::styled(format!(" {title}"), style))
+        })
+        .collect();
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(app.theme.prompt_bg)),
+        popup,
+    );
+}
+
+/// Renders the fuzzy file matches above the minibuffer (`Ctrl+P`).
+fn draw_file_palette(app: &App, frame: &mut Frame, prompt_area: Rect) {
+    let Prompt::FileFinder { input, selected } = &app.prompt else {
+        return;
+    };
+    let hits = app.file_matches(input);
+    if hits.is_empty() {
+        return;
+    }
+    let height = (hits.len() as u16).min(prompt_area.y);
+    if height == 0 {
+        return;
+    }
+    let width = prompt_area.width.min(64);
+    let popup = Rect {
+        x: prompt_area.x,
+        y: prompt_area.y - height,
+        width,
+        height,
+    };
+
+    let lines: Vec<Line> = hits
+        .iter()
+        .take(height as usize)
+        .enumerate()
+        .map(|(i, hit)| {
+            let style = if i == *selected {
+                Style::default()
+                    .bg(app.theme.selection)
+                    .fg(app.theme.foreground)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .bg(app.theme.prompt_bg)
+                    .fg(app.theme.foreground)
+            };
+            Line::from(Span::styled(format!(" {}", hit.relative), style))
         })
         .collect();
 
@@ -439,7 +500,7 @@ fn draw_language_palette(app: &App, frame: &mut Frame, prompt_area: Rect) {
     );
 }
 
-fn gutter_width(app: &App) -> u16 {
+pub(crate) fn gutter_width(app: &App) -> u16 {
     let lines = app.editor().doc.buffer().len_lines().max(1);
     let digits = lines.to_string().len() as u16;
     // 1 marker column + line number + 1 trailing space.
@@ -493,7 +554,129 @@ fn draw_tabs(app: &mut App, frame: &mut Frame, area: Rect) {
     );
 }
 
-fn draw_content(app: &mut App, frame: &mut Frame, area: Rect) {
+/// Draws a pane tree, recursively splitting the area along each node.
+fn draw_panes(app: &mut App, frame: &mut Frame, layout: &PaneLayout, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    match layout {
+        PaneLayout::Empty => {
+            frame.buffer_mut().set_style(
+                area,
+                Style::default()
+                    .bg(app.theme.background)
+                    .fg(app.theme.foreground),
+            );
+        }
+        PaneLayout::Leaf(index) => draw_editor_pane(app, frame, *index, area),
+        PaneLayout::Split {
+            direction,
+            first,
+            second,
+            ratio,
+        } => {
+            let (left, right) = split_area(*direction, *ratio, area);
+            draw_panes(app, frame, first, left);
+            draw_panes(app, frame, second, right);
+            draw_divider(app, frame, *direction, left, right, area);
+        }
+    }
+}
+
+/// Splits `area` into two adjacent rectangles with a one-cell gap for a
+/// divider. The ratio is clamped so neither pane can disappear entirely.
+fn split_area(direction: SplitDirection, ratio: f64, area: Rect) -> (Rect, Rect) {
+    let ratio = ratio.clamp(0.1, 0.9);
+    match direction {
+        SplitDirection::Horizontal => {
+            let first = (area.width as f64 * ratio).round() as u16;
+            let first = first.clamp(1, area.width.saturating_sub(2).max(1));
+            let second = area.width.saturating_sub(first + 1);
+            (
+                Rect {
+                    width: first,
+                    ..area
+                },
+                Rect {
+                    x: area.x + first + 1,
+                    width: second,
+                    ..area
+                },
+            )
+        }
+        SplitDirection::Vertical => {
+            let first = (area.height as f64 * ratio).round() as u16;
+            let first = first.clamp(1, area.height.saturating_sub(2).max(1));
+            let second = area.height.saturating_sub(first + 1);
+            (
+                Rect {
+                    height: first,
+                    ..area
+                },
+                Rect {
+                    y: area.y + first + 1,
+                    height: second,
+                    ..area
+                },
+            )
+        }
+    }
+}
+
+/// Paints the one-cell divider between two panes.
+fn draw_divider(
+    app: &App,
+    frame: &mut Frame,
+    direction: SplitDirection,
+    left: Rect,
+    right: Rect,
+    area: Rect,
+) {
+    let style = Style::default()
+        .fg(app.theme.gutter)
+        .bg(app.theme.background);
+    match direction {
+        SplitDirection::Horizontal => {
+            let x = left.x + left.width;
+            for y in area.y..area.y + area.height {
+                if let Some(cell) = frame.buffer_mut().cell_mut(Position2::xy(x, y)) {
+                    cell.set_char('│');
+                    cell.set_style(style);
+                }
+            }
+        }
+        SplitDirection::Vertical => {
+            let y = left.y + left.height;
+            let _ = right;
+            for x in area.x..area.x + area.width {
+                if let Some(cell) = frame.buffer_mut().cell_mut(Position2::xy(x, y)) {
+                    cell.set_char('─');
+                    cell.set_style(style);
+                }
+            }
+        }
+    }
+}
+
+/// Draws one editor pane. `draw_content` reads the active editor throughout,
+/// so we swap `active` for the duration of the call and restore it afterwards.
+fn draw_editor_pane(app: &mut App, frame: &mut Frame, index: usize, area: Rect) {
+    if index >= app.editors.len() {
+        return;
+    }
+    let focused = index == app.active;
+    app.editor_hits.push(EditorHit {
+        area,
+        editor: index,
+        rows: Vec::new(),
+    });
+    let previous = app.active;
+    app.active = index;
+    draw_content(app, frame, area, focused);
+    app.active = previous;
+}
+
+fn draw_content(app: &mut App, frame: &mut Frame, area: Rect, focused: bool) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -512,15 +695,17 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect) {
 
     {
         let ed = app.editor_mut();
-        if cursor_line < ed.scroll_line {
-            ed.scroll_line = cursor_line;
-        } else if cursor_line >= ed.scroll_line + rows {
-            ed.scroll_line = cursor_line + 1 - rows;
-        }
-        if cursor_display < ed.scroll_col {
-            ed.scroll_col = cursor_display;
-        } else if text_width > 0 && cursor_display >= ed.scroll_col + text_width {
-            ed.scroll_col = cursor_display + 1 - text_width;
+        if !ed.free_scroll {
+            if cursor_line < ed.scroll_line {
+                ed.scroll_line = cursor_line;
+            } else if cursor_line >= ed.scroll_line + rows {
+                ed.scroll_line = cursor_line + 1 - rows;
+            }
+            if cursor_display < ed.scroll_col {
+                ed.scroll_col = cursor_display;
+            } else if text_width > 0 && cursor_display >= ed.scroll_col + text_width {
+                ed.scroll_col = cursor_display + 1 - text_width;
+            }
         }
     }
 
@@ -557,11 +742,22 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect) {
         })
         .collect();
     // --- Render each visible line ---------------------------------------
-    for row in 0..rows {
-        let line_idx = top + row;
-        let y = area.y + row as u16;
+    // Diagnostic overlays occupy a screen row of their own, so rows and
+    // document lines are tracked separately (`app.editor_hits` records the
+    // mapping for mouse clicks in each pane).
+    let mut cursor_screen: Option<u16> = None;
+    let mut screen_row = 0usize;
+    let mut line_idx = top;
+    while screen_row < rows {
         if line_idx >= app.editor().doc.buffer().len_lines() {
             break;
+        }
+        let y = area.y + screen_row as u16;
+        if let Some(hit) = app.editor_hits.last_mut() {
+            hit.rows.push((y, line_idx));
+        }
+        if line_idx == cursor_line {
+            cursor_screen = Some(y);
         }
         let is_cursor_line = line_idx == cursor_line;
         let row_bg = if is_cursor_line {
@@ -681,12 +877,51 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect) {
                 );
             }
         }
+
+        screen_row += 1;
+        // Inline diagnostic: a floating message row directly under the line.
+        if app.inline_diagnostics {
+            if let Some(diag) = &diag {
+                if screen_row < rows {
+                    let y = area.y + screen_row as u16;
+                    let bg = app.theme.status_bg;
+                    for x in area.x..area.x + area.width {
+                        if let Some(cell) = frame.buffer_mut().cell_mut(Position2::xy(x, y)) {
+                            cell.set_char(' ');
+                            cell.set_style(Style::default().bg(bg));
+                        }
+                    }
+                    let color = severity_color(app, diag.severity());
+                    frame.buffer_mut().set_string(
+                        area.x,
+                        y,
+                        "↳",
+                        Style::default()
+                            .fg(color)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                    let message = diag.message.lines().next().unwrap_or("").trim();
+                    let message = format!("{}: {message}", diag.severity().label());
+                    let message = truncate_display(&message, text_width);
+                    frame.buffer_mut().set_string(
+                        text_x,
+                        y,
+                        &message,
+                        Style::default().fg(color).bg(bg),
+                    );
+                    screen_row += 1;
+                }
+            }
+        }
+        line_idx += 1;
     }
-    let cursor_row = cursor_line.saturating_sub(top);
-    if !app.sidebar.focused() && cursor_line >= top && cursor_line < top + rows {
-        let cx = text_x as i64 + cursor_display as i64 - scroll_col as i64;
-        if cx >= text_x as i64 {
-            frame.set_cursor_position((cx as u16, area.y + cursor_row as u16));
+    if focused && !app.sidebar.focused() {
+        if let Some(y) = cursor_screen {
+            let cx = text_x as i64 + cursor_display as i64 - scroll_col as i64;
+            if cx >= text_x as i64 {
+                frame.set_cursor_position((cx as u16, y));
+            }
         }
     }
 }
@@ -796,6 +1031,12 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
 
     let left = format!(" {}{}  v{}", ed.title(), dirty, env!("CARGO_PKG_VERSION"));
     let lang = format!("{} ", ed.language.name());
+    let mode = app.vim.mode.label();
+    let mode = if mode.is_empty() {
+        String::new()
+    } else {
+        format!(" {mode} ")
+    };
     let encoding = if ed.doc.buffer().is_read_only() {
         "RO"
     } else if app.lsp.active_languages().contains(&ed.language) {
@@ -814,7 +1055,10 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
                     app.theme.warning
                 }),
         ),
-        None => {
+        // A script can own the right-hand side of the status line with
+        // `set_status`. Transient messages still win so feedback is never
+        // hidden behind a custom formatter.
+        None if app.custom_status.is_none() => {
             let diags = app.diagnostics();
             let diag_part = app
                 .diagnostics_summary(&diags)
@@ -837,10 +1081,20 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
                     .fg(app.theme.status_fg),
             )
         }
+        None => (
+            format!(" {} ", app.custom_status.as_deref().unwrap_or("")),
+            Style::default()
+                .bg(app.theme.status_bg)
+                .fg(app.theme.status_accent),
+        ),
     };
 
     let width = area.width as usize;
-    let used = left.chars().count() + 1 + lang.chars().count() + right.chars().count();
+    let used = left.chars().count()
+        + 1
+        + lang.chars().count()
+        + mode.chars().count()
+        + right.chars().count();
     let pad = width.saturating_sub(used);
 
     let line = Line::from(vec![
@@ -857,6 +1111,13 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
             Style::default()
                 .bg(app.theme.status_bg)
                 .fg(app.theme.status_accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            mode,
+            Style::default()
+                .bg(app.theme.status_bg)
+                .fg(app.theme.warning)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -902,21 +1163,25 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+O  Open file      Ctrl+N  New buffer"),
         Line::from(" Ctrl+W  Close buffer   Ctrl+Q  Quit"),
         Line::from(" Ctrl+Z  Undo          Ctrl+Y  Redo"),
-        Line::from(" Ctrl+F  Find          F3/F4   Find next/prev"),
+        Line::from(" Ctrl+F  Find          F3/Shift+F3  Find next/prev"),
         Line::from(" Ctrl+H  Replace       Ctrl+G  Go to line"),
         Line::from(" Ctrl+L  Language      Ctrl+A  Select all"),
         Line::from(" Ctrl+X/C/V  Cut/Copy/Paste"),
-        Line::from(" Ctrl+P  Command palette"),
+        Line::from(" Ctrl+P  Fuzzy file finder"),
+        Line::from(" Ctrl+Shift+P  Command palette"),
         Line::from(" Ctrl+E  Eval TextWrite"),
         Line::from(" Ctrl+Space  Complete   F5  Hover   F12  Definition"),
         Line::from(" Ctrl+T  Toggle theme  Esc     Clear selection"),
         Line::from(" Ctrl+B  Explorer      Shift+Ctrl+O  Folder"),
         Line::from(" Ctrl+M / Alt+M  Manage plugins"),
         Line::from(" Ctrl+Tab  Next tab    Ctrl+W  Close tab"),
+        Line::from(" ft -O a b  Open as split panes"),
+        Line::from(" Ctrl+←/↑ Prev pane  Ctrl+→/↓ Next pane"),
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),
         Line::from(" Alt+C  Terminal  ·  Alt+U  Check for updates"),
-        Line::from(" Shift+Arrows  Select  Ctrl+←/→  Word move"),
+        Line::from(" Alt+V  Vim layer  ·  Alt+: / :  Command bar (:w :q :theme…)"),
+        Line::from(" Shift+Arrows  Select  Alt+←/→  Word move"),
         Line::from(" Alt+↑/↓  Move line   Alt+Shift+↑/↓  Add cursors"),
         Line::from(" Ctrl+D  Select next occurrence"),
         Line::from(" Ctrl+/  Comment   Shift+Ctrl+D  Duplicate line"),
@@ -1086,6 +1351,108 @@ fn draw_update_dialog(app: &mut App, frame: &mut Frame, area: Rect) {
         app.update_hits.push((rect, button));
         x += width + 1;
     }
+}
+
+/// The consent dialog for a missing language server.
+fn draw_lsp_install_dialog(app: &mut App, frame: &mut Frame, area: Rect) {
+    use crate::app::LspInstallState;
+
+    let (title, body): (&str, Vec<Line<'static>>) = match &app.lsp_install {
+        LspInstallState::Idle => return,
+        LspInstallState::Offer { hint } => (
+            " Language server ",
+            vec![
+                Line::from(vec![
+                    Span::styled(
+                        format!(" {}", hint.language.name()),
+                        Style::default()
+                            .fg(app.theme.status_accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" · ", Style::default().fg(app.theme.gutter)),
+                    Span::styled(
+                        hint.program.clone(),
+                        Style::default().fg(app.theme.foreground),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(" Completion, hover and diagnostics need a language server."),
+                Line::from(" None is installed for this language yet."),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(" Install: ", Style::default().fg(app.theme.gutter)),
+                    Span::styled(
+                        hint.command_line(),
+                        Style::default()
+                            .fg(app.theme.status_accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Docs:    ", Style::default().fg(app.theme.gutter)),
+                    Span::styled(hint.docs, Style::default().fg(app.theme.status_accent)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        " [y] Install ",
+                        Style::default()
+                            .fg(app.theme.status_accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" [n] Skip", Style::default().fg(app.theme.gutter)),
+                ]),
+            ],
+        ),
+        LspInstallState::Installing { program, .. } => (
+            " Installing language server ",
+            vec![
+                Line::from(format!(" Installing {program}…")),
+                Line::from(""),
+                Line::from(" This runs in the background; Fast Text stays usable."),
+                Line::from(" The server starts on its own when the install finishes."),
+            ],
+        ),
+        LspInstallState::Failed { error, .. } => (
+            " Install failed ",
+            vec![
+                Line::from(" The language server could not be installed."),
+                Line::from(""),
+                Line::from(format!(" {error}")),
+                Line::from(""),
+                Line::from(" Press any key to close, or run 'Retry language server'"),
+                Line::from(" from the command palette to try again."),
+            ],
+        ),
+    };
+
+    let popup = centered_rect(72, 42, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.status_accent))
+        .style(Style::default().bg(app.theme.status_bg))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.status_accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .style(
+                Style::default()
+                    .bg(app.theme.status_bg)
+                    .fg(app.theme.foreground),
+            ),
+        inner,
+    );
 }
 
 /// The centred list overlay: symbols, code actions, find-in-files results.
@@ -1510,6 +1877,25 @@ fn display_col(text: &str, char_col: usize) -> usize {
     col
 }
 
+/// Shortens `text` to at most `width` display cells, adding an ellipsis when
+/// something was cut.
+fn truncate_display(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
+        if used + w > width {
+            if width > 0 {
+                out.push('…');
+            }
+            return out;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out
+}
+
 /// The bracket under (or just before) the caret and its partner, as character
 /// indices. Strings and comments are not skipped, which keeps this dependency
 /// free and predictable.
@@ -1697,6 +2083,31 @@ mod tests {
             out.contains(env!("CARGO_PKG_VERSION")),
             "output was:\n{out}"
         );
+    }
+
+    #[test]
+    fn renders_split_panes_with_a_divider() {
+        use crate::app::SplitDirection;
+        let mut app = App::new(vec![]);
+        app.split_active(SplitDirection::Horizontal);
+        // Give the left pane distinct text so both panes can be identified.
+        app.active = 0;
+        app.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('L'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        let out = render(&mut app, 80, 24);
+        assert!(
+            out.contains('│'),
+            "a vertical divider should be drawn:\n{out}"
+        );
+        assert_eq!(
+            app.editor_hits.len(),
+            2,
+            "each pane records its own hit area"
+        );
+        assert!(app.editor_hits.iter().any(|hit| hit.editor == 0));
+        assert!(app.editor_hits.iter().any(|hit| hit.editor == 1));
     }
 
     #[test]

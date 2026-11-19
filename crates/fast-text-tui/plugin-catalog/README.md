@@ -32,6 +32,14 @@ highlight a plugin and press `Enter`.
 | `todo_report.tw` | Group every TODO/FIXME/HACK/XXX/NOTE in the document into a report with line numbers |
 | `wrap.tw` | Reflow the selection to 72 or 80 columns, or unwrap paragraphs |
 | `path_tools.tw` | Switch path separators, keep base names or directories, quote or unquote paths |
+| `brackets.tw` | Auto-close/wrap `()`, `[]`, `{}` and quotes, stepping over an existing closer |
+| `markdown_preview.tw` | Toggle a Markdown buffer into readable text and back; insert a heading outline |
+| `status_line.tw` | Four custom status-line formats with `on_buffer_open` / `on_buffer_save` hooks |
+| `toc.tw` | Insert a linked Markdown table of contents with GitHub-style anchors |
+| `brace_format.tw` | Indent or compact JSON/CSS-style text without touching string contents |
+| `sql_case.tw` | Upper- or lower-case SQL keywords, leaving identifiers and strings alone |
+| `markdown_tables.tw` | Build an aligned Markdown table from TSV or CSV, or re-align a pipe table |
+| `log_summary.tw` | Count log lines by severity with a sample, or keep only ERROR lines |
 
 ## Writing your own
 

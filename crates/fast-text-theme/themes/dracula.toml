@@ -1,0 +1,33 @@
+# dracula — a built-in Fast Text theme.
+name = "dracula"
+dark = true
+
+[ui]
+background = "#282a36"
+foreground = "#f8f8f2"
+gutter = "#6272a4"
+gutter_active = "#f8f8f2"
+cursor_line = "#30323f"
+selection = "#44475a"
+status_bg = "#21222c"
+status_fg = "#f8f8f2"
+status_accent = "#bd93f9"
+prompt_bg = "#30323f"
+tab_active = "#ff79c6"
+tab_inactive = "#6272a4"
+error = "#ff5555"
+warning = "#f1fa8c"
+
+[syntax]
+plain = "#f8f8f2"
+keyword = "#ff79c6"
+type = "#8be9fd"
+function = "#50fa7b"
+string = "#f1fa8c"
+number = "#bd93f9"
+comment = "#6272a4"
+operator = "#ff79c6"
+punctuation = "#f8f8f2"
+constant = "#bd93f9"
+attribute = "#50fa7b"
+variable = "#f8f8f2"

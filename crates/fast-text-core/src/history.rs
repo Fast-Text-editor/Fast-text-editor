@@ -1,7 +1,8 @@
 use crate::{Edit, Selection};
+use serde::{Deserialize, Serialize};
 
 /// The kind of a transaction, used to decide what can be coalesced together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TxnKind {
     Insert,
     Delete,
@@ -9,7 +10,7 @@ pub enum TxnKind {
 }
 
 /// A group of edits that undo/redo as a single unit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub edits: Vec<Edit>,
     pub kind: TxnKind,
@@ -49,7 +50,7 @@ impl Transaction {
 }
 
 /// A bounded stack of undo/redo transactions.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
@@ -126,6 +127,34 @@ impl History {
 
     pub fn undo_len(&self) -> usize {
         self.undo.len()
+    }
+
+    /// Rebuilds a history from serialized transactions.
+    pub fn from_parts(undo: Vec<Transaction>, redo: Vec<Transaction>, limit: usize) -> Self {
+        let limit = limit.max(1);
+        let mut history = Self { undo, redo, limit };
+        while history.undo.len() > limit {
+            history.undo.remove(0);
+        }
+        while history.redo.len() > limit {
+            history.redo.remove(0);
+        }
+        history
+    }
+
+    /// The recorded undo transactions, oldest first.
+    pub fn undo_transactions(&self) -> &[Transaction] {
+        &self.undo
+    }
+
+    /// The recorded redo transactions.
+    pub fn redo_transactions(&self) -> &[Transaction] {
+        &self.redo
+    }
+
+    /// The configured maximum number of undo transactions.
+    pub fn limit(&self) -> usize {
+        self.limit
     }
 }
 

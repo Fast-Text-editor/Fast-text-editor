@@ -1,6 +1,6 @@
 # Theme switching for Fast Text — a TextWrite plugin.
 #
-# Every built-in theme becomes a "Theme: ..." command in the Ctrl+P palette,
+# Every built-in theme becomes a "Theme: ..." command in the Ctrl+Shift+P palette,
 # two extra palettes are defined right here with `define_theme`, and Alt+T
 # cycles through the whole pack.
 #

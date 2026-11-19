@@ -92,10 +92,15 @@ pub enum EditorAction {
     Undo,
     Redo,
     Save,
+    /// Formats the buffer through the language server (`on_buffer_save`).
+    Format,
     SetLanguage(String),
     SetCursorStyle(CursorStyle),
     /// Switch to the named color theme (built-in or defined by a plugin).
     SetTheme(String),
+    /// Replace the right-hand status line with `Some(text)`, or restore the
+    /// built-in status when `None`. Plugins use this for custom status bars.
+    SetStatus(Option<String>),
     /// Pause automated playback for this many milliseconds before running the
     /// next action. Hosts without timed playback may treat it immediately.
     Wait(u64),

@@ -188,6 +188,33 @@ impl PluginHost {
     pub fn is_empty(&self) -> bool {
         self.sources.is_empty()
     }
+
+    /// True when a loaded plugin defines `name` as a function.
+    pub fn has_hook(&self, name: &str) -> bool {
+        self.ast.iter_functions().any(|f| f.name == name)
+    }
+
+    /// Runs a lifecycle hook such as `on_buffer_open` or `on_buffer_save`.
+    ///
+    /// A missing hook is not an error; it simply produces no actions. Errors
+    /// inside a hook are collected in [`PluginHost::errors`] and returned as a
+    /// message action so the frontend can surface them without crashing.
+    pub fn run_hook(&mut self, name: &str, ctx: &EditorContext) -> Vec<EditorAction> {
+        if !self.has_hook(name) {
+            return Vec::new();
+        }
+        self.queue.lock().unwrap().clear();
+        let mut scope = Scope::new();
+        push_context(&mut scope, ctx);
+        if let Err(e) = self
+            .engine
+            .call_fn::<Dynamic>(&mut scope, &self.ast, name, ())
+        {
+            self.errors.push(format!("hook {name}: {e}"));
+            return vec![EditorAction::Message(format!("{name} failed: {e}"))];
+        }
+        std::mem::take(&mut *self.queue.lock().unwrap())
+    }
 }
 
 fn push_context(scope: &mut Scope<'static>, ctx: &EditorContext) {
@@ -340,6 +367,26 @@ fn build_engine(queue: Queue, commands: Commands, keybindings: Keybinds) -> Engi
             q.lock()
                 .unwrap()
                 .push(EditorAction::SetTheme(name.to_string()));
+        });
+    }
+    {
+        let q = queue.clone();
+        engine.register_fn("set_status", move |text: ImmutableString| {
+            q.lock()
+                .unwrap()
+                .push(EditorAction::SetStatus(Some(text.to_string())));
+        });
+    }
+    {
+        let q = queue.clone();
+        engine.register_fn("clear_status", move || {
+            q.lock().unwrap().push(EditorAction::SetStatus(None));
+        });
+    }
+    {
+        let q = queue.clone();
+        engine.register_fn("format", move || {
+            q.lock().unwrap().push(EditorAction::Format);
         });
     }
     {
@@ -514,6 +561,32 @@ mod tests {
                 EditorAction::MoveWordForward { extend: false },
             ]
         );
+    }
+
+    #[test]
+    fn runs_buffer_lifecycle_hooks() {
+        let mut host = PluginHost::new();
+        host.add_plugin(
+            "hooks",
+            r#"
+                fn on_buffer_open() { message("opened"); }
+                fn on_buffer_save() { format(); }
+            "#,
+        );
+        assert!(host.has_hook("on_buffer_open"));
+        assert!(host.has_hook("on_buffer_save"));
+        assert!(!host.has_hook("on_buffer_close"));
+        assert_eq!(
+            host.run_hook("on_buffer_open", &EditorContext::default()),
+            vec![EditorAction::Message("opened".to_string())]
+        );
+        assert_eq!(
+            host.run_hook("on_buffer_save", &EditorContext::default()),
+            vec![EditorAction::Format]
+        );
+        assert!(host
+            .run_hook("on_buffer_close", &EditorContext::default())
+            .is_empty());
     }
 
     #[test]

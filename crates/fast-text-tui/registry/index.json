@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "updated": "2026-11-19",
+  "plugins": [
+    {
+      "name": "themes",
+      "file": "themes.tw",
+      "title": "Theme pack",
+      "tags": ["theme", "ui"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/themes.tw"
+    },
+    {
+      "name": "case-and-lines",
+      "file": "case_and_lines.tw",
+      "title": "Case and lines",
+      "tags": ["text", "lines", "case"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/case_and_lines.tw"
+    },
+    {
+      "name": "stats",
+      "file": "stats.tw",
+      "title": "Statistics",
+      "tags": ["text", "count", "stats"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/stats.tw"
+    },
+    {
+      "name": "markdown-pro",
+      "file": "markdown_pro.tw",
+      "title": "Markdown pro",
+      "tags": ["markdown", "writing"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/markdown_pro.tw"
+    },
+    {
+      "name": "whitespace",
+      "file": "whitespace.tw",
+      "title": "Whitespace",
+      "tags": ["text", "cleanup"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/whitespace.tw"
+    },
+    {
+      "name": "snippets",
+      "file": "snippets.tw",
+      "title": "Snippets",
+      "tags": ["insert", "writing"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/snippets.tw"
+    },
+    {
+      "name": "comments",
+      "file": "comments.tw",
+      "title": "Comments",
+      "tags": ["comments", "code"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/comments.tw"
+    },
+    {
+      "name": "csv-tools",
+      "file": "csv_tools.tw",
+      "title": "CSV tools",
+      "tags": ["csv", "table", "data"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/csv_tools.tw"
+    },
+    {
+      "name": "markdown-extras",
+      "file": "markdown_extras.tw",
+      "title": "Markdown extras",
+      "tags": ["markdown", "writing", "toc"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/markdown_extras.tw"
+    },
+    {
+      "name": "date-time",
+      "file": "date_time.tw",
+      "title": "Date converter",
+      "tags": ["date", "convert"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/date_time.tw"
+    },
+    {
+      "name": "identifier-case",
+      "file": "identifier_case.tw",
+      "title": "Identifier cases",
+      "tags": ["code", "case", "refactor"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/identifier_case.tw"
+    },
+    {
+      "name": "word-frequency",
+      "file": "word_frequency.tw",
+      "title": "Word frequency",
+      "tags": ["text", "stats", "writing"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/word_frequency.tw"
+    },
+    {
+      "name": "boxes",
+      "file": "boxes.tw",
+      "title": "Box drawing",
+      "tags": ["text", "art"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/boxes.tw"
+    },
+    {
+      "name": "align",
+      "file": "align.tw",
+      "title": "Align",
+      "tags": ["text", "columns"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/align.tw"
+    },
+    {
+      "name": "cipher",
+      "file": "cipher.tw",
+      "title": "Ciphers",
+      "tags": ["text", "cipher", "fun"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/cipher.tw"
+    },
+    {
+      "name": "todo-report",
+      "file": "todo_report.tw",
+      "title": "TODO report",
+      "tags": ["todo", "project"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/todo_report.tw"
+    },
+    {
+      "name": "wrap",
+      "file": "wrap.tw",
+      "title": "Wrap",
+      "tags": ["text", "wrap"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/wrap.tw"
+    },
+    {
+      "name": "path-tools",
+      "file": "path_tools.tw",
+      "title": "Path tools",
+      "tags": ["path", "file", "convert"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/path_tools.tw"
+    },
+    {
+      "name": "smart-brackets",
+      "file": "brackets.tw",
+      "title": "Smart brackets",
+      "tags": ["editing", "brackets", "pair"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/brackets.tw"
+    },
+    {
+      "name": "markdown-preview",
+      "file": "markdown_preview.tw",
+      "title": "Markdown preview",
+      "tags": ["markdown", "preview", "view"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/markdown_preview.tw"
+    },
+    {
+      "name": "status-formats",
+      "file": "status_line.tw",
+      "title": "Status formats",
+      "tags": ["ui", "status", "hooks"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/status_line.tw"
+    },
+    {
+      "name": "linked-toc",
+      "file": "toc.tw",
+      "title": "Linked TOC",
+      "tags": ["markdown", "outline", "toc"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/toc.tw"
+    },
+    {
+      "name": "brace-format",
+      "file": "brace_format.tw",
+      "title": "Brace formatter",
+      "tags": ["json", "css", "format"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/brace_format.tw"
+    },
+    {
+      "name": "sql-case",
+      "file": "sql_case.tw",
+      "title": "SQL casing",
+      "tags": ["sql", "format", "case"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/sql_case.tw"
+    },
+    {
+      "name": "markdown-tables",
+      "file": "markdown_tables.tw",
+      "title": "Markdown tables",
+      "tags": ["markdown", "table", "csv"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/markdown_tables.tw"
+    },
+    {
+      "name": "log-summary",
+      "file": "log_summary.tw",
+      "title": "Log summary",
+      "tags": ["log", "report", "analysis"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/log_summary.tw"
+    }
+  ]
+}

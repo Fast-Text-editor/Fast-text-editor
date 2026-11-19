@@ -1,0 +1,33 @@
+# solarized-light — a built-in Fast Text theme.
+name = "solarized-light"
+dark = false
+
+[ui]
+background = "#fdf6e3"
+foreground = "#657b83"
+gutter = "#93a1a1"
+gutter_active = "#586e75"
+cursor_line = "#eee8d5"
+selection = "#eee8d5"
+status_bg = "#eee8d5"
+status_fg = "#586e75"
+status_accent = "#268bd2"
+prompt_bg = "#eee8d5"
+tab_active = "#268bd2"
+tab_inactive = "#93a1a1"
+error = "#dc322f"
+warning = "#b58900"
+
+[syntax]
+plain = "#657b83"
+keyword = "#859900"
+type = "#b58900"
+function = "#268bd2"
+string = "#2aa198"
+number = "#d33682"
+comment = "#93a1a1"
+operator = "#859900"
+punctuation = "#657b83"
+constant = "#d33682"
+attribute = "#268bd2"
+variable = "#657b83"

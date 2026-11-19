@@ -21,9 +21,16 @@
 //! `file_name`, `language`.
 
 mod action;
+#[cfg(feature = "rhai")]
 mod host;
 mod key;
+mod keymap;
 
 pub use action::{CursorStyle, EditorAction};
+#[cfg(feature = "rhai")]
 pub use host::{CommandInfo, EditorContext, PluginHost};
 pub use key::{KeyName, KeySpec};
+pub use keymap::{
+    command_for, command_from_name, command_id, command_title, default_bindings, default_shortcut,
+    EditorCommand, COMMANDS,
+};

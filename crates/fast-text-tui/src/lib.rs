@@ -11,6 +11,7 @@ pub mod find_in_files;
 pub mod lsp;
 pub mod picker;
 pub mod plugin_manager;
+pub mod registry;
 pub mod sidebar;
 pub mod theme;
 pub mod ui;
@@ -46,6 +47,10 @@ fn terminal_cursor(style: CursorStyle) -> SetCursorStyle {
 struct Args {
     files: Vec<PathBuf>,
     config: Option<PathBuf>,
+    /// Open the files as split panes instead of tabs (`-O`).
+    split: bool,
+    /// A `ft plugin …` / `ft install …` command instead of opening files.
+    command: Option<registry::PluginCommand>,
 }
 
 /// The `--help` text.
@@ -54,20 +59,31 @@ Fast Text — a fast, keyboard-driven text editor
 
 USAGE:
     fast-text [OPTIONS] [FILE]...
+    fast-text plugin <COMMAND> [ARGS]
+    fast-text install <NAME>... [--force]
 
 OPTIONS:
     -c, --config <PATH>   Read settings from PATH instead of
                           $FAST_TEXT_CONFIG, else $XDG_CONFIG_HOME/fast-text/config.toml
+    -O, --split           Open files as nested split panes instead of tabs
     -h, --help            Print this help and exit
     -V, --version         Print the version and exit
     --                    Treat every later argument as a file name
+
+PLUGIN COMMANDS:
+    list                  Show installed plugins and the registry size
+    search [QUERY...]     Search the registry by name, title, tag or description
+    install <NAME>...     Install one or more registry plugins (--force overwrites)
+    remove <NAME>...      Delete installed plugins
+    help                  Show this list
 
 ARGS:
     FILE...               Files to open; a missing file opens an empty buffer
 
 KEYS:
     Alt+H                 In-editor help, listing every key
-    Ctrl+P                Command palette (including plugin commands)
+    Ctrl+P                Fuzzy file finder
+    Ctrl+Shift+P          Command palette (including plugin commands)
     Alt+M                 Plugin manager
 ";
 
@@ -76,6 +92,8 @@ KEYS:
 fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
     let mut files = Vec::new();
     let mut config = None;
+    let mut split = false;
+    let mut command = None;
     let mut literal = false;
     let mut args = raw;
 
@@ -84,6 +102,21 @@ fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, Strin
         if literal {
             files.push(PathBuf::from(arg));
             continue;
+        }
+        // Subcommands are only recognised before the first file, so a file
+        // literally named `install` can still be opened with `-- install`.
+        if files.is_empty() && command.is_none() {
+            match text.as_str() {
+                "install" => {
+                    command = Some(parse_install(args)?);
+                    break;
+                }
+                "plugin" => {
+                    command = parse_plugin(args)?;
+                    break;
+                }
+                _ => {}
+            }
         }
         match text.as_str() {
             "--" => literal = true,
@@ -95,6 +128,7 @@ fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, Strin
                 println!("fast-text {}", env!("CARGO_PKG_VERSION"));
                 return Ok(None);
             }
+            "-O" | "--split" => split = true,
             "-c" | "--config" => {
                 let value = args
                     .next()
@@ -111,13 +145,91 @@ fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, Strin
         }
     }
 
-    Ok(Some(Args { files, config }))
+    Ok(Some(Args {
+        files,
+        config,
+        split,
+        command,
+    }))
+}
+
+/// Parses `install NAME... [--force]` (also used by `plugin install`).
+fn parse_install(
+    mut args: impl Iterator<Item = OsString>,
+) -> Result<registry::PluginCommand, String> {
+    let mut names = Vec::new();
+    let mut force = false;
+    for arg in args.by_ref() {
+        let text = arg.to_string_lossy().to_string();
+        match text.as_str() {
+            "-f" | "--force" => force = true,
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unrecognized option '{other}' for install"));
+            }
+            _ => names.push(text),
+        }
+    }
+    if names.is_empty() {
+        return Err("'install' needs at least one plugin name".to_string());
+    }
+    Ok(registry::PluginCommand::Install { names, force })
+}
+
+/// Parses the rest of a `plugin` command; `Ok(None)` means help was printed.
+fn parse_plugin(
+    mut args: impl Iterator<Item = OsString>,
+) -> Result<Option<registry::PluginCommand>, String> {
+    let Some(subcommand) = args.next() else {
+        return Ok(Some(registry::PluginCommand::List));
+    };
+    let subcommand = subcommand.to_string_lossy().to_string();
+    match subcommand.as_str() {
+        "list" | "ls" | "installed" => Ok(Some(registry::PluginCommand::List)),
+        "search" | "find" => {
+            let query: Vec<String> = args.map(|arg| arg.to_string_lossy().into_owned()).collect();
+            Ok(Some(registry::PluginCommand::Search(query.join(" "))))
+        }
+        "install" | "add" => parse_install(args).map(Some),
+        "remove" | "rm" | "uninstall" | "delete" => {
+            let names: Vec<String> = args.map(|arg| arg.to_string_lossy().into_owned()).collect();
+            if names.is_empty() {
+                Err("'plugin remove' needs at least one plugin name".to_string())
+            } else {
+                Ok(Some(registry::PluginCommand::Remove { names }))
+            }
+        }
+        "help" | "--help" | "-h" => {
+            print_plugin_help();
+            Ok(None)
+        }
+        other => Err(format!("unknown plugin command '{other}'")),
+    }
+}
+
+fn print_plugin_help() {
+    println!(
+        "Fast Text plugin registry\n\n\
+         USAGE:\n    \
+         fast-text plugin <COMMAND> [ARGS]\n    \
+         fast-text install <NAME>... [--force]\n\n\
+         COMMANDS:\n    \
+         list                  Show installed plugins and the registry size\n    \
+         search [QUERY...]     Search by name, title, tag or description\n    \
+         install <NAME>...     Install registry plugins (--force overwrites)\n    \
+         remove <NAME>...      Delete installed plugins\n\n\
+         Plugins are written in TextWrite and live in\n    \
+         ~/.config/fast-text/plugins\n\n\
+         The registry itself is in crates/fast-text-tui/registry/index.json."
+    );
 }
 
 /// Runs the editor, opening any files named on the command line.
 pub fn run_cli() -> std::io::Result<()> {
     match parse_args(std::env::args_os().skip(1)) {
-        Ok(Some(args)) => run_cli_with_options(args.files, args.config),
+        Ok(Some(args)) => match args.command {
+            Some(command) => registry::run(&command),
+            None => run_cli_with_layout(args.files, args.config, args.split),
+        },
         Ok(None) => Ok(()), // --help / --version already printed
         Err(message) => {
             eprintln!("fast-text: {message}");
@@ -134,6 +246,16 @@ pub fn run_cli_with(files: Vec<PathBuf>) -> std::io::Result<()> {
 
 /// Runs the editor with files and an optional config path.
 pub fn run_cli_with_options(files: Vec<PathBuf>, config: Option<PathBuf>) -> std::io::Result<()> {
+    run_cli_with_layout(files, config, false)
+}
+
+/// Runs the editor with files, a config path, and a request to open the files
+/// as split panes instead of tabs.
+pub fn run_cli_with_layout(
+    files: Vec<PathBuf>,
+    config: Option<PathBuf>,
+    split: bool,
+) -> std::io::Result<()> {
     // Set up the terminal.
     enable_raw_mode()?;
     let mut out = stdout();
@@ -141,7 +263,7 @@ pub fn run_cli_with_options(files: Vec<PathBuf>, config: Option<PathBuf>) -> std
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = event_loop(&mut terminal, files, config);
+    let result = event_loop(&mut terminal, files, config, split);
 
     // Restore the terminal even if the loop errored.
     disable_raw_mode()?;
@@ -160,10 +282,11 @@ fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     files: Vec<PathBuf>,
     config_path: Option<PathBuf>,
+    split: bool,
 ) -> std::io::Result<()> {
     // `--config` wins; otherwise the usual XDG location.
     let config = Config::load_from(config_path.or_else(Config::path));
-    let mut app = App::with_config(files, config);
+    let mut app = App::with_config_and_layout(files, config, split);
     // Clear out the `.old` twins a previous self-update left behind, then ask
     // GitHub about newer releases in the background (throttled to once a day,
     // and off when `check_updates = false` / `FAST_TEXT_UPDATE_CHECK=0`).
@@ -237,6 +360,23 @@ mod tests {
     }
 
     #[test]
+    fn split_flag_opens_files_as_panes() {
+        let args = parse(&["-O", "a.rs", "b.rs"]).unwrap().unwrap();
+        assert!(args.split);
+        assert_eq!(
+            args.files,
+            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]
+        );
+        let args = parse(&["--split", "a.rs"]).unwrap().unwrap();
+        assert!(args.split);
+        assert!(!parse(&["a.rs"]).unwrap().unwrap().split);
+        // After `--`, `-O` is a file name like any other.
+        let args = parse(&["--", "-O"]).unwrap().unwrap();
+        assert!(!args.split);
+        assert_eq!(args.files, vec![PathBuf::from("-O")]);
+    }
+
+    #[test]
     fn a_lone_dash_is_a_file_but_unknown_flags_are_errors() {
         let args = parse(&["-"]).unwrap().unwrap();
         assert_eq!(args.files, vec![PathBuf::from("-")]);
@@ -257,5 +397,60 @@ mod tests {
     #[test]
     fn config_without_a_path_is_an_error() {
         assert!(parse(&["--config"]).is_err());
+    }
+
+    #[test]
+    fn install_is_a_shorthand_for_plugin_install() {
+        let args = parse(&["install", "boxes", "align", "--force"])
+            .unwrap()
+            .unwrap();
+        assert!(args.files.is_empty());
+        assert_eq!(
+            args.command,
+            Some(registry::PluginCommand::Install {
+                names: vec!["boxes".into(), "align".into()],
+                force: true,
+            })
+        );
+    }
+
+    #[test]
+    fn plugin_commands_are_parsed() {
+        assert_eq!(
+            parse(&["plugin"]).unwrap().unwrap().command,
+            Some(registry::PluginCommand::List)
+        );
+        assert_eq!(
+            parse(&["plugin", "search", "markdown", "table"])
+                .unwrap()
+                .unwrap()
+                .command,
+            Some(registry::PluginCommand::Search("markdown table".into()))
+        );
+        assert_eq!(
+            parse(&["plugin", "remove", "boxes"])
+                .unwrap()
+                .unwrap()
+                .command,
+            Some(registry::PluginCommand::Remove {
+                names: vec!["boxes".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn plugin_commands_validate_their_arguments() {
+        assert!(parse(&["install"]).is_err());
+        assert!(parse(&["install", "--force"]).is_err());
+        assert!(parse(&["install", "boxes", "--bogus"]).is_err());
+        assert!(parse(&["plugin", "remove"]).is_err());
+        assert!(parse(&["plugin", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn a_double_dash_still_opens_a_file_called_install() {
+        let args = parse(&["--", "install"]).unwrap().unwrap();
+        assert_eq!(args.files, vec![PathBuf::from("install")]);
+        assert_eq!(args.command, None);
     }
 }

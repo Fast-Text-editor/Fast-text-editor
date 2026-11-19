@@ -8,55 +8,62 @@
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
 use fast_text_syntax::{highlight_line, LanguageId, LineState, TokenKind};
+use fast_text_theme::{Rgb, SyntaxColors, Theme};
 
-/// A dark/light color scheme for syntax tokens.
+/// Syntax colors for the editor, projected from the shared theme schema.
+///
+/// The terminal, desktop and web builds all render the same [`Theme`], so a
+/// file looks the same whichever frontend opened it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     pub dark: bool,
+    pub syntax: SyntaxColors,
 }
 
 impl Palette {
-    pub const DARK: Palette = Palette { dark: true };
-    pub const LIGHT: Palette = Palette { dark: false };
+    /// The shared dark palette, usable in `const` contexts and tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub const DARK: Palette = Palette {
+        dark: true,
+        syntax: SyntaxColors::DARK,
+    };
+
+    /// The shared light palette.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn light() -> Palette {
+        Palette::from_theme(&Theme::light())
+    }
+
+    /// Projects a theme's syntax colors into egui colors.
+    pub fn from_theme(theme: &Theme) -> Palette {
+        Palette {
+            dark: theme.dark,
+            syntax: theme.syntax,
+        }
+    }
 
     /// The color for a token kind.
     pub fn color(self, kind: TokenKind) -> Color32 {
-        if self.dark {
-            match kind {
-                TokenKind::Plain => rgb(0xD7, 0xDA, 0xE0),
-                TokenKind::Keyword => rgb(0xC6, 0x78, 0xDD),
-                TokenKind::Type => rgb(0xE5, 0xC0, 0x7B),
-                TokenKind::Function => rgb(0x61, 0xAF, 0xEF),
-                TokenKind::String => rgb(0xCE, 0x91, 0x78),
-                TokenKind::Number => rgb(0xD1, 0x9A, 0x66),
-                TokenKind::Comment => rgb(0x6A, 0x73, 0x7D),
-                TokenKind::Operator => rgb(0x56, 0xB6, 0xC2),
-                TokenKind::Punctuation => rgb(0x9A, 0xA5, 0xB1),
-                TokenKind::Constant => rgb(0xD1, 0x9A, 0x66),
-                TokenKind::Attribute => rgb(0xE5, 0xC0, 0x7B),
-                TokenKind::Variable => rgb(0xE0, 0x6C, 0x75),
-            }
-        } else {
-            match kind {
-                TokenKind::Plain => rgb(0x24, 0x29, 0x2E),
-                TokenKind::Keyword => rgb(0xA6, 0x26, 0xA6),
-                TokenKind::Type => rgb(0x9A, 0x67, 0x00),
-                TokenKind::Function => rgb(0x1F, 0x6F, 0xB2),
-                TokenKind::String => rgb(0xA3, 0x15, 0x15),
-                TokenKind::Number => rgb(0x8A, 0x5A, 0x00),
-                TokenKind::Comment => rgb(0x7A, 0x82, 0x8C),
-                TokenKind::Operator => rgb(0x00, 0x7A, 0x8A),
-                TokenKind::Punctuation => rgb(0x5A, 0x63, 0x6E),
-                TokenKind::Constant => rgb(0x8A, 0x5A, 0x00),
-                TokenKind::Attribute => rgb(0x9A, 0x67, 0x00),
-                TokenKind::Variable => rgb(0xC0, 0x39, 0x3F),
-            }
-        }
+        let color = match kind {
+            TokenKind::Plain => self.syntax.plain,
+            TokenKind::Keyword => self.syntax.keyword,
+            TokenKind::Type => self.syntax.type_,
+            TokenKind::Function => self.syntax.function,
+            TokenKind::String => self.syntax.string,
+            TokenKind::Number => self.syntax.number,
+            TokenKind::Comment => self.syntax.comment,
+            TokenKind::Operator => self.syntax.operator,
+            TokenKind::Punctuation => self.syntax.punctuation,
+            TokenKind::Constant => self.syntax.constant,
+            TokenKind::Attribute => self.syntax.attribute,
+            TokenKind::Variable => self.syntax.variable,
+        };
+        color32(color)
     }
 }
 
-fn rgb(r: u8, g: u8, b: u8) -> Color32 {
-    Color32::from_rgb(r, g, b)
+fn color32(color: Rgb) -> Color32 {
+    Color32::from_rgb(color.r, color.g, color.b)
 }
 
 /// Builds a `LayoutJob` that paints `text` with syntax colors.
@@ -198,7 +205,7 @@ mod tests {
     fn light_and_dark_palettes_differ() {
         assert_ne!(
             Palette::DARK.color(TokenKind::Keyword),
-            Palette::LIGHT.color(TokenKind::Keyword)
+            Palette::light().color(TokenKind::Keyword)
         );
     }
 

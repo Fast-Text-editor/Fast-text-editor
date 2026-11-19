@@ -20,6 +20,8 @@ path = "src/main.rs"
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
-fast-text-core.workspace = true
+fast-text-core = { workspace = true, features = ["fs"] }
 fast-text-syntax.workspace = true
 fast-text-update.workspace = true
+fast-text-theme.workspace = true
+fast-text-plugin = { workspace = true, features = ["rhai"] }

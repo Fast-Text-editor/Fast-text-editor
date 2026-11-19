@@ -1,0 +1,33 @@
+# light — a built-in Fast Text theme.
+name = "light"
+dark = false
+
+[ui]
+background = "#fafafa"
+foreground = "#24292e"
+gutter = "#9da3ab"
+gutter_active = "#24292e"
+cursor_line = "#eef1f5"
+selection = "#c8ddf5"
+status_bg = "#e8eaed"
+status_fg = "#24292e"
+status_accent = "#0b6cd6"
+prompt_bg = "#e8eaed"
+tab_active = "#0b6cd6"
+tab_inactive = "#9da3ab"
+error = "#c0392b"
+warning = "#b06a00"
+
+[syntax]
+plain = "#24292e"
+keyword = "#a626a6"
+type = "#9a6700"
+function = "#1a5fb0"
+string = "#0a7a4a"
+number = "#b05a00"
+comment = "#7a828c"
+operator = "#0b728a"
+punctuation = "#5a626c"
+constant = "#b05a00"
+attribute = "#9a6700"
+variable = "#b03a40"

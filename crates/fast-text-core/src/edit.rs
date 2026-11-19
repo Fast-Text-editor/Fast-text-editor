@@ -1,10 +1,11 @@
 use crate::Buffer;
+use serde::{Deserialize, Serialize};
 
 /// A single, reversible edit against a buffer.
 ///
 /// Edits record enough information to both apply and revert themselves, which
 /// is what makes undo/redo cheap: we just replay the inverse.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Edit {
     /// Text of the given length was removed at `at` (char index).
     Delete { at: usize, text: String },

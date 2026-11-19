@@ -452,6 +452,23 @@ fn http_get(url: &str, timeout_secs: u64, dest: &Path) -> Result<u16, String> {
     Err("checking for updates needs curl or wget on PATH".to_string())
 }
 
+/// Downloads a small text file, such as a plugin registry index or script.
+///
+/// Uses the same `curl`/`wget` path as the updater, so it needs no extra
+/// dependencies. The caller is responsible for validating what it gets back.
+pub fn fetch_text(url: &str, timeout_secs: u64) -> Result<String, String> {
+    let dest = scratch_file("download.txt");
+    let result = match http_get(url, timeout_secs, &dest) {
+        Ok(200) => std::fs::read(&dest)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|error| format!("could not read the download: {error}")),
+        Ok(code) => Err(format!("the server answered with HTTP {code}")),
+        Err(error) => Err(error),
+    };
+    let _ = std::fs::remove_file(&dest);
+    result
+}
+
 /// Finds the last HTTP status line in `wget -S` output, e.g.
 /// `  HTTP/1.1 404 Not Found`.
 fn http_status_from(stderr: &str) -> Option<u16> {

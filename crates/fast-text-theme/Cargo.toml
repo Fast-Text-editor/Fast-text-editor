@@ -1,0 +1,16 @@
+[package]
+name = "fast-text-theme"
+description = "The shared, TOML-based Fast Text theme schema used by every frontend."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories = ["text-editors", "development-tools"]
+
+[dependencies]

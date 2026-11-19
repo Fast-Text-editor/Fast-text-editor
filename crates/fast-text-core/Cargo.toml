@@ -14,3 +14,13 @@ ropey.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ignore = { workspace = true, optional = true }
+fuzzy-matcher.workspace = true
+
+[features]
+default = []
+# Filesystem-backed fuzzy file finding (text editors); off for WASM.
+fs = ["dep:ignore"]
+

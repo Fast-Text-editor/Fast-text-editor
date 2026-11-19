@@ -4,6 +4,93 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-19
+
+### Added
+
+- **One shared theme schema** (`fast-text-theme`): ten built-in TOML palettes —
+  `dark`, `light`, `one-dark`, `monokai`, `dracula`, `nord`, `gruvbox`,
+  `tokyo-night`, `solarized-dark`, `solarized-light` — read by the TUI, GUI and
+  WASM frontends. Colors accept `#RRGGBB`, `0xRRGGBB` and `#RGB`; missing keys
+  fall back to `dark`, unknown keys warn instead of failing. User themes in
+  `~/.config/fast-text/themes/*.toml` extend the list, and the web build exposes
+  `themeCss()` / `themeColors()`.
+- **One shared keymap** (`fast-text-plugin::keymap`): the terminal, desktop and
+  web frontends resolve keys through the same `EditorCommand` table, with `Cmd`
+  / `Super` translated to `Ctrl` on macOS. `Ctrl+P` opens a fuzzy file finder,
+  `Ctrl+Shift+P` the command palette, `F3` / `Shift+F3` find next / previous,
+  and `Alt+T` cycles themes.
+- **Persistent undo**: `fast-text-core` serialises up to 200 transactions per
+  absolute path into the cache directory (FNV-1a keyed) and writes them
+  atomically, so undo survives a restart. `Document` also gained `snapshot`,
+  `restore`, `mark_dirty`, `replace_range` and multi-cursor support.
+- **Nested split panes**: `ft -O file1 file2` (or `--split`) opens files as
+  panes instead of tabs. `PaneLayout` is a binary tree over editor indices;
+  the palette offers *Split pane right/down*, *Focus next/previous* and *Close
+  pane*, with `Ctrl` + arrows moving focus when more than one pane exists.
+- **Script hooks and a richer bridge**: `on_buffer_open()` and
+  `on_buffer_save()` run for all loaded scripts, with recursion guards.
+  `EditorAction::SetStatus`, `set_status()` and `clear_status()` let a script
+  own the right-hand status line; transient messages still take precedence.
+  The palette can restore the default status line.
+- **Plugin registry**: an embedded index of 26 entries, user overrides in
+  `~/.config/fast-text/registry.json`, and `ft plugin list|search|install|remove|help`
+  plus the `ft install NAME... [--force]` shorthand. Bundled plugins install
+  offline; only non-bundled entries fetch their source.
+- **Vim layer** (TUI): `Alt+V` or `[editor] vim = true` toggles Normal, Insert,
+  Visual and Visual-line modes with motions, `d`/`y`/`c` operators, `v`/`V`
+  selections and a status-line mode label. A bare `:` in Normal mode, or
+  `Alt+:` from anywhere, opens a `:` command bar with `:w`, `:q`, `:q!`, `:wq`,
+  `:e`, `:theme`, `:set`, `:help` and `:ls`.
+- **True mouse editing** (TUI): click to place the caret, drag or `Shift`-click
+  to select, and scroll with the wheel; free scrolling is independent of the
+  caret.
+- **Inline floating diagnostics**: when enabled (default), LSP messages appear
+  on a row under each affected line as `↳ severity: message`. `:set diagnostics`
+  / `:set nodiagnostics` toggles them at runtime.
+- **LSP install consent**: missing-server hints for Rust, JavaScript,
+  TypeScript, Python, Shell, Go and Ruby appear in a dialog with the exact
+  package-manager command and documentation link. Nothing is spawned until the
+  user accepts; declines and failures are remembered, and *Retry language
+  server* re-probes `PATH`.
+- **Eight new first-party TextWrite scripts**, bringing the catalog to 26:
+  **Smart brackets** (`brackets.tw`), **Markdown preview**
+  (`markdown_preview.tw`), **Status formats** (`status_line.tw`), **Linked TOC**
+  (`toc.tw`), **Brace formatter** (`brace_format.tw`), **SQL casing**
+  (`sql_case.tw`), **Markdown tables** (`markdown_tables.tw`) and **Log
+  summary** (`log_summary.tw`). Each ships with behavior tests and a registry
+  entry.
+- **`docs/scripting.md`**: a dedicated guide to the `ScriptHost` bridge —
+  context globals, queued actions, `selected_text` and selection replacement,
+  every host function, commands/keys/hooks, themes, the status line, error
+  channels, imports, automations and language gotchas.
+- **Showcase GIFs** in `assets/` generated locally, plus a reworked README with
+  a workspace tree, current key table, config sample, registry CLI examples and
+  frontend design notes.
+
+### Changed
+
+- The catalog is written entirely in TextWrite and all 26 plugins load together
+  in one interpreter; each has a unique prefix to avoid top-level name clashes.
+  The plugin-catalog README lists every script.
+- Workspace dependencies declare `fast-text-plugin` without Rhai by default;
+  the TUI, GUI and `fast-text-textwrite` crates opt into the `rhai` feature so
+  the WASM build no longer pulls in Rhai.
+- CI continues to enforce `cargo fmt --check` and strict clippy, and runs an
+  explicit crate test list that excludes `fast-text-wasm`; tests never touch the
+  network or spawn processes. Release archives are version-less
+  `fast-text-<target>.tar.gz` (`.zip` on Windows) for five standard triples.
+
+### Fixed
+
+- `Ctrl` + arrows no longer override word motion in a single-pane layout; they
+  only move pane focus when a split is present.
+- The help overlay and welcome buffer now distinguish `Ctrl+P` (fuzzy file
+  finder) from `Ctrl+Shift+P` (command palette), and document the `:` command
+  bar and Vim toggle.
+- Closing a pane collapses its split and restores a single buffer cleanly;
+  removing a leaf from a layout shifts later editor indices.
+
 ## [0.4.0] - 2026-10-23
 
 ### Added

@@ -141,6 +141,11 @@ impl Document {
         self.buffer.is_dirty()
     }
 
+    /// Marks the document as having unsaved changes.
+    pub fn mark_dirty(&mut self) {
+        self.buffer.mark_dirty();
+    }
+
     pub fn text(&self) -> String {
         self.buffer.text()
     }
@@ -680,6 +685,21 @@ impl Document {
         self.insert_str(text);
     }
 
+    /// Replaces the character range `[start, end)` with `text` as one
+    /// undoable transaction.
+    ///
+    /// Unlike [`Document::apply_edits`], indices are clamped and swapped when
+    /// reversed, which makes this safe to call straight from a frontend that
+    /// mirrors a text widget's edits.
+    pub fn replace_range(&mut self, start: usize, end: usize, text: &str) {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        self.apply_edits(&[(start, end, text.to_string())]);
+    }
+
     fn commit(&mut self, mut txn: Transaction, coalesce: bool) {
         txn.after = self.selection;
         self.history.record(txn, coalesce);
@@ -887,6 +907,45 @@ impl Document {
     }
 
     // --- Persistence -------------------------------------------------------
+
+    /// Captures the editable state needed to restore this document later:
+    /// text, selections and the full undo/redo stack.
+    pub fn snapshot(&self) -> crate::undo::Session {
+        crate::undo::Session {
+            text: self.text(),
+            selection: self.selection,
+            extra: self.extra.clone(),
+            history: self.history.clone(),
+            path: self.path().map(|p| p.to_string_lossy().into_owned()),
+            saved_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        }
+    }
+
+    /// Rebuilds a document from a [`crate::undo::Session`].
+    pub fn restore(session: crate::undo::Session) -> Self {
+        let buffer = Buffer::from_str(&session.text);
+        let len = buffer.max_char_idx();
+        let mut selection = session.selection;
+        selection.clamp(len);
+        let extra = session
+            .extra
+            .into_iter()
+            .map(|mut s| {
+                s.clamp(len);
+                s
+            })
+            .collect();
+        Self {
+            buffer,
+            history: session.history,
+            selection,
+            extra,
+            goal_col: None,
+        }
+    }
 
     pub fn save(&mut self) -> Result<()> {
         self.buffer.save()

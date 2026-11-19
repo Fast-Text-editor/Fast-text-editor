@@ -14,5 +14,5 @@ name = "fast_text_textwrite"
 path = "src/lib.rs"
 
 [dependencies]
-fast-text-plugin.workspace = true
+fast-text-plugin = { workspace = true, features = ["rhai"] }
 textwrite.workspace = true

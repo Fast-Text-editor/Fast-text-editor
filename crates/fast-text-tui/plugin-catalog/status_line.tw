@@ -1,0 +1,104 @@
+# Custom status-line formats for Fast Text — a TextWrite plugin.
+#
+# The right-hand side of the status bar normally shows the caret position and
+# an LSP marker. This script takes it over with a format you choose, using the
+# same editor globals the other scripts see: file_name, language, line, col,
+# line_count, document_text, selected_text and has_selection.
+#
+# Formats refresh on buffer open and save, and on demand with Alt+S. Use
+# Ctrl+Shift+P → "Status: restore default" to give the built-in status back.
+
+let st_template = 'compact'
+
+fn st_scope() {
+    if has_selection {
+        return selected_text
+    }
+    return document_text
+}
+
+fn st_words() {
+    return len(words(st_scope()))
+}
+
+fn st_compact() {
+    set_status("Ln {line + 1}, Col {col + 1}  ·  {language}")
+}
+
+fn st_detailed() {
+    let scope = st_scope()
+    let w = len(words(scope))
+    let c = len(scope)
+    let mark = ''
+    if has_selection {
+        mark = '  (selection)'
+    }
+    set_status("{w}w {c}c  ·  Ln {line + 1}/{line_count}  ·  {language}  ·  {file_name}{mark}")
+}
+
+fn st_writing() {
+    let w = len(words(st_scope()))
+    let minutes = (w + 199) / 200
+    let scope = 'document'
+    if has_selection {
+        scope = 'selection'
+    }
+    set_status("Writing: {w} {scope} words  ·  ~{minutes} min read")
+}
+
+fn st_minimal() {
+    set_status("{line + 1}:{col + 1}")
+}
+
+fn st_apply() {
+    if st_template is 'detailed' {
+        st_detailed()
+    } else if st_template is 'writing' {
+        st_writing()
+    } else if st_template is 'minimal' {
+        st_minimal()
+    } else {
+        st_compact()
+    }
+}
+
+fn st_use_compact() {
+    st_template = 'compact'
+    st_apply()
+}
+
+fn st_use_detailed() {
+    st_template = 'detailed'
+    st_apply()
+}
+
+fn st_use_writing() {
+    st_template = 'writing'
+    st_apply()
+}
+
+fn st_use_minimal() {
+    st_template = 'minimal'
+    st_apply()
+}
+
+fn st_restore() {
+    st_template = 'compact'
+    clear_status()
+}
+
+fn on_buffer_open() {
+    st_apply()
+}
+
+fn on_buffer_save() {
+    st_apply()
+}
+
+command_with_desc('Status: compact', 'Ln/Col and language in the status line', 'st_use_compact')
+command_with_desc('Status: detailed', 'Word and character counts plus the file name', 'st_use_detailed')
+command_with_desc('Status: writing', 'Word count and estimated reading time', 'st_use_writing')
+command_with_desc('Status: minimal', 'Only the caret position', 'st_use_minimal')
+command_with_desc('Status: refresh', 'Recompute the current status format', 'st_apply')
+command_with_desc('Status: restore default', 'Give the built-in status line back', 'st_restore')
+bind('alt+s', 'Status: refresh')

@@ -1,0 +1,143 @@
+# Markdown table builder for Fast Text — a TextWrite plugin.
+#
+# Converts selected tab- or comma-separated rows into an aligned GitHub
+# Markdown table, padding each column to the widest cell. Existing Markdown
+# pipe tables can also be re-aligned with the third command.
+#
+# Select the rows, then run Ctrl+Shift+P → "Table: from TSV" or
+# "Table: from CSV". The result replaces the selection.
+
+fn tb_cells(row, separator) {
+    let out = []
+    for cell in split(row, separator) {
+        push(out, trim(cell))
+    }
+    return out
+}
+
+fn tb_row(cells, widths) {
+    let parts = []
+    let i = 0
+    while i < len(widths) {
+        let cell = ''
+        if i < len(cells) {
+            cell = cells[i]
+        }
+        let pad = widths[i] - len(cell)
+        if pad < 0 {
+            pad = 0
+        }
+        push(parts, cell + (' ' * pad))
+        i += 1
+    }
+    return '| ' + join(parts, ' | ') + ' |'
+}
+
+fn tb_render(rows) {
+    let cols = 0
+    for row in rows {
+        if len(row) > cols {
+            cols = len(row)
+        }
+    }
+    if cols is 0 {
+        return ''
+    }
+
+    let widths = []
+    repeat cols times {
+        push(widths, 0)
+    }
+    for row in rows {
+        let i = 0
+        while i < len(row) {
+            if len(row[i]) > widths[i] {
+                widths[i] = len(row[i])
+            }
+            i += 1
+        }
+    }
+
+    let dividers = []
+    repeat cols times {
+        let i = len(dividers)
+        push(dividers, '-' * widths[i])
+    }
+
+    let out = [tb_row(rows[0], widths), tb_row(dividers, widths)]
+    let i = 1
+    while i < len(rows) {
+        push(out, tb_row(rows[i], widths))
+        i += 1
+    }
+    return join(out, '\n')
+}
+
+fn tb_build(separator) {
+    if not has_selection {
+        message('Select the rows to convert first')
+        return
+    }
+    let rows = []
+    for row in lines(selected_text) {
+        if trim(row) is '' {
+            continue
+        }
+        push(rows, tb_cells(row, separator))
+    }
+    let table = tb_render(rows)
+    if table is '' {
+        message('No cells found in the selection')
+        return
+    }
+    delete_selection()
+    insert(table)
+    message("Built a {len(rows)}-row table")
+}
+
+fn tb_from_tsv() {
+    tb_build('\t')
+}
+
+fn tb_from_csv() {
+    tb_build(',')
+}
+
+fn tb_realign() {
+    if not has_selection {
+        message('Select the pipe table first')
+        return
+    }
+    let rows = []
+    for row in lines(selected_text) {
+        let cells = []
+        for cell in split(row, '|') {
+            if trim(cell) is not '' {
+                push(cells, trim(cell))
+            }
+        }
+        if len(cells) is 0 {
+            continue
+        }
+        let divider = true
+        for cell in cells {
+            if not starts_with(cell, '-') {
+                divider = false
+            }
+        }
+        if not divider {
+            push(rows, cells)
+        }
+    }
+    let table = tb_render(rows)
+    if table is '' {
+        message('No table rows found')
+        return
+    }
+    delete_selection()
+    insert(table)
+}
+
+command_with_desc('Table: from TSV', 'Turn selected tab-separated rows into a Markdown table', 'tb_from_tsv')
+command_with_desc('Table: from CSV', 'Turn selected comma-separated rows into a Markdown table', 'tb_from_csv')
+command_with_desc('Table: re-align', 'Pad the columns of a selected Markdown pipe table', 'tb_realign')

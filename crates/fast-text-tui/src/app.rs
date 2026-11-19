@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use fast_text_core::fuzzy::FileFinder;
 use fast_text_core::{Document, Position, SearchDirection};
 use fast_text_lsp::{Diagnostic, LspRange, Severity, TextEdit, WorkspaceEdit};
 use fast_text_plugin::{CursorStyle, EditorAction, EditorContext, KeyName, KeySpec, PluginHost};
@@ -14,10 +15,11 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use unicode_width::UnicodeWidthChar;
 
 use crate::config::Config;
 use crate::find_in_files;
-use crate::lsp::LspManager;
+use crate::lsp::{InstallHint, LspManager};
 use crate::picker::{Picker, PickerItem, PickerOutcome};
 use crate::plugin_manager::{ManagerAction, PluginManager};
 use crate::sidebar::{Sidebar, SidebarAction};
@@ -31,6 +33,9 @@ pub struct Editor {
     pub scroll_line: usize,
     /// First visible column (in terminal cells).
     pub scroll_col: usize,
+    /// True while the mouse wheel has scrolled the view away from the caret;
+    /// the next key press snaps the caret back into view.
+    pub free_scroll: bool,
     /// `states[i]` is the highlight state at the start of line `i`.
     states: Vec<LineState>,
     /// Buffer revision the cache was built for.
@@ -44,6 +49,7 @@ impl Editor {
             language,
             scroll_line: 0,
             scroll_col: 0,
+            free_scroll: false,
             states: vec![LineState::default()],
             cached_rev: u64::MAX,
         }
@@ -56,6 +62,17 @@ impl Editor {
     pub fn open(path: PathBuf) -> std::io::Result<Self> {
         let doc = Document::from_file(&path).map_err(|e| std::io::Error::other(e.to_string()))?;
         let language = LanguageId::from_path(&path.to_string_lossy());
+        // Restore the undo stack saved when this buffer was last closed, so a
+        // terminal window that disappears does not take the history with it.
+        let doc = match fast_text_core::undo::load(&path) {
+            Some(mut restored) => {
+                if restored.text() != doc.text() {
+                    restored.mark_dirty();
+                }
+                restored
+            }
+            None => doc,
+        };
         Ok(Self::new(doc, language))
     }
 
@@ -178,6 +195,10 @@ pub enum Prompt {
     Eval {
         input: String,
     },
+    /// The `:` command bar (`:w`, `:q`, `:theme …`, or a TextWrite expression).
+    CommandLine {
+        input: String,
+    },
     /// Chooses the folder shown in the explorer sidebar.
     OpenFolder {
         input: String,
@@ -185,6 +206,11 @@ pub enum Prompt {
     /// Copies a plugin file into the user plugin directory.
     InstallPlugin {
         input: String,
+    },
+    /// Fuzzy workspace file search (`Ctrl+Shift+P`).
+    FileFinder {
+        input: String,
+        selected: usize,
     },
 }
 
@@ -221,6 +247,7 @@ impl Prompt {
             Prompt::Command { input } => Some(("Command: ".into(), input.clone())),
             Prompt::Automation { input } => Some(("Run automation: ".into(), input.clone())),
             Prompt::Eval { input } => Some(("TextWrite: ".into(), input.clone())),
+            Prompt::CommandLine { input } => Some((":".into(), input.clone())),
             Prompt::OpenFolder { input } => Some(("Open folder: ".into(), input.clone())),
             Prompt::FindInFiles { input } => Some(("Find in files: ".into(), input.clone())),
             Prompt::Rename { input } => Some(("Rename symbol to: ".into(), input.clone())),
@@ -228,6 +255,7 @@ impl Prompt {
             Prompt::InstallPlugin { input } => {
                 Some(("Install plugin (path): ".into(), input.clone()))
             }
+            Prompt::FileFinder { input, .. } => Some(("Open file (fuzzy): ".into(), input.clone())),
         }
     }
 }
@@ -266,7 +294,258 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "Replay macro",
     "Save macro…",
     "Check for updates",
+    "Install language server",
+    "Retry language server",
+    "Split pane right",
+    "Split pane down",
+    "Close pane",
+    "Focus next pane",
+    "Focus previous pane",
+    "Restore default status line",
 ];
+
+/// The optional Vim editing layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VimMode {
+    /// Vim keys are not intercepted; the editor behaves normally.
+    #[default]
+    Disabled,
+    /// Motions and operators (`h`, `j`, `dd`, `gg`, `:` …).
+    Normal,
+    /// Ordinary typing; `Esc` returns to Normal.
+    Insert,
+    /// Character-wise selection, extended with motions.
+    Visual,
+    /// Line-wise selection.
+    VisualLine,
+}
+
+impl VimMode {
+    /// Short label for the status bar, or `""` when disabled.
+    pub fn label(self) -> &'static str {
+        match self {
+            VimMode::Disabled => "",
+            VimMode::Normal => "NORMAL",
+            VimMode::Insert => "INSERT",
+            VimMode::Visual => "VISUAL",
+            VimMode::VisualLine => "V-LINE",
+        }
+    }
+}
+
+/// Vim layer state, including a one-character pending operator (`d`, `y`, `g`).
+#[derive(Debug, Clone, Default)]
+pub struct VimState {
+    pub mode: VimMode,
+    pending: Option<char>,
+}
+
+impl VimState {
+    /// Starts in Normal mode (used when the config enables Vim).
+    pub fn enabled() -> Self {
+        Self {
+            mode: VimMode::Normal,
+            pending: None,
+        }
+    }
+
+    /// True while Normal/Visual keys should be interpreted as motions.
+    pub fn intercepts(&self) -> bool {
+        matches!(
+            self.mode,
+            VimMode::Normal | VimMode::Visual | VimMode::VisualLine
+        )
+    }
+}
+
+/// Which way a pane is divided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitDirection {
+    /// Two panes side by side.
+    Horizontal,
+    /// Two panes stacked.
+    Vertical,
+}
+
+/// A recursively split set of editor panes.
+///
+/// Leaves hold indices into [`App::editors`], so tabs and panes can refer to the
+/// same buffer. Keeping the tree separate from the flat buffer list means the
+/// existing tab/save/undo code is unchanged: only rendering and focus need to
+/// know about the layout.
+#[derive(Debug, Clone)]
+pub enum PaneLayout {
+    /// Nothing (only appears briefly while a pane is being removed).
+    Empty,
+    /// A single editor fills the area.
+    Leaf(usize),
+    /// Two child layouts separated by a divider.
+    Split {
+        direction: SplitDirection,
+        first: Box<PaneLayout>,
+        second: Box<PaneLayout>,
+        /// Fraction of the area given to `first`, between 0.1 and 0.9.
+        ratio: f64,
+    },
+}
+
+impl Default for PaneLayout {
+    fn default() -> Self {
+        Self::Leaf(0)
+    }
+}
+
+impl PaneLayout {
+    /// Builds a right-leaning chain of horizontal splits from editor indices.
+    pub fn horizontal_chain(indices: impl IntoIterator<Item = usize>) -> Self {
+        Self::chain(indices, SplitDirection::Horizontal)
+    }
+
+    fn chain(indices: impl IntoIterator<Item = usize>, direction: SplitDirection) -> Self {
+        let mut leaves = indices.into_iter();
+        let Some(first) = leaves.next() else {
+            return Self::Empty;
+        };
+        let mut layout = Self::Leaf(first);
+        for index in leaves {
+            layout = Self::Split {
+                direction,
+                first: Box::new(layout),
+                second: Box::new(Self::Leaf(index)),
+                ratio: 0.5,
+            };
+        }
+        layout
+    }
+
+    /// True when this subtree holds no editors.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+
+    /// True when `index` is one of this subtree's leaves.
+    pub fn contains(&self, index: usize) -> bool {
+        match self {
+            Self::Leaf(i) => *i == index,
+            Self::Split { first, second, .. } => first.contains(index) || second.contains(index),
+            Self::Empty => false,
+        }
+    }
+
+    /// The first leaf in reading order, used when a pane closes.
+    pub fn first_leaf(&self) -> Option<usize> {
+        match self {
+            Self::Leaf(i) => Some(*i),
+            Self::Split { first, second, .. } => first.first_leaf().or_else(|| second.first_leaf()),
+            Self::Empty => None,
+        }
+    }
+
+    /// All leaves in reading order.
+    pub fn leaves(&self) -> Vec<usize> {
+        let mut out = Vec::new();
+        self.collect_leaves(&mut out);
+        out
+    }
+
+    fn collect_leaves(&self, out: &mut Vec<usize>) {
+        match self {
+            Self::Leaf(i) => out.push(*i),
+            Self::Split { first, second, .. } => {
+                first.collect_leaves(out);
+                second.collect_leaves(out);
+            }
+            Self::Empty => {}
+        }
+    }
+
+    /// The leaf after `current` in reading order, wrapping around.
+    pub fn next_leaf(&self, current: usize) -> Option<usize> {
+        let leaves = self.leaves();
+        let position = leaves.iter().position(|i| *i == current)?;
+        Some(leaves[(position + 1) % leaves.len()])
+    }
+
+    /// The leaf before `current` in reading order, wrapping around.
+    pub fn previous_leaf(&self, current: usize) -> Option<usize> {
+        let leaves = self.leaves();
+        let position = leaves.iter().position(|i| *i == current)?;
+        Some(leaves[(position + leaves.len() - 1) % leaves.len()])
+    }
+
+    /// Replaces the pane showing `target` with two panes: the old editor and
+    /// `new_index`. Returns true when a matching leaf was found.
+    pub fn split(&mut self, target: usize, new_index: usize, direction: SplitDirection) -> bool {
+        match self {
+            Self::Leaf(index) if *index == target => {
+                *self = Self::Split {
+                    direction,
+                    first: Box::new(Self::Leaf(target)),
+                    second: Box::new(Self::Leaf(new_index)),
+                    ratio: 0.5,
+                };
+                true
+            }
+            Self::Split { first, second, .. } => {
+                first.split(target, new_index, direction)
+                    || second.split(target, new_index, direction)
+            }
+            _ => false,
+        }
+    }
+
+    /// Removes `target` from the tree, collapsing the split that held it.
+    /// Returns the editor index that should receive focus afterwards.
+    pub fn remove(&mut self, target: usize) -> Option<usize> {
+        match self {
+            Self::Leaf(index) if *index == target => {
+                *self = Self::Empty;
+                None
+            }
+            Self::Split { first, second, .. } => {
+                let focus = if first.contains(target) {
+                    first.remove(target).or_else(|| second.first_leaf())
+                } else if second.contains(target) {
+                    second.remove(target).or_else(|| first.first_leaf())
+                } else {
+                    None
+                };
+                if first.is_empty() {
+                    *self = std::mem::replace(second.as_mut(), Self::Empty);
+                } else if second.is_empty() {
+                    *self = std::mem::replace(first.as_mut(), Self::Empty);
+                }
+                focus
+            }
+            _ => None,
+        }
+    }
+
+    /// Adjusts leaf indices after the editor at `removed` was deleted.
+    pub fn shift_after(&mut self, removed: usize) {
+        match self {
+            Self::Leaf(index) => {
+                if *index > removed {
+                    *index -= 1;
+                }
+            }
+            Self::Split { first, second, .. } => {
+                first.shift_after(removed);
+                second.shift_after(removed);
+            }
+            Self::Empty => {}
+        }
+    }
+}
+
+/// One rendered text area, with the screen-row → document-line map needed to
+/// turn mouse events into buffer positions.
+#[derive(Debug, Clone)]
+pub struct EditorHit {
+    pub area: Rect,
+    pub editor: usize,
+    pub rows: Vec<(u16, usize)>,
+}
 
 /// A place a picker row can jump to.
 #[derive(Debug, Clone)]
@@ -369,6 +648,52 @@ enum UpdateEvent {
     },
 }
 
+/// The optional "install a language server?" consent dialog.
+///
+/// Missing servers are detected during [`App::tick`]. We only know the command
+/// to run, never run it implicitly: the user has to say yes. Keeping the state
+/// here (rather than in `LspManager`) makes it easy to test without spawning a
+/// package manager.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspInstallState {
+    /// Nothing to show.
+    Idle,
+    /// Asking whether to run the install command.
+    Offer {
+        /// Everything we know about the missing server.
+        hint: InstallHint,
+    },
+    /// The installer is running in the background.
+    Installing {
+        /// The language whose server is being installed.
+        language: fast_text_syntax::LanguageId,
+        /// The executable we wait for.
+        program: String,
+    },
+    /// The installer failed; the dialog explains why.
+    Failed {
+        /// The language whose server failed to install.
+        language: fast_text_syntax::LanguageId,
+        /// What went wrong.
+        error: String,
+    },
+}
+
+impl LspInstallState {
+    /// True while the dialog should capture keys and clicks.
+    pub fn is_dialog_open(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+}
+
+/// Result of a background language-server install.
+enum LspInstallEvent {
+    Finished {
+        language: fast_text_syntax::LanguageId,
+        result: Result<(), String>,
+    },
+}
+
 /// A clickable region of the tab bar, recorded while it is drawn.
 #[derive(Debug, Clone, Copy)]
 pub struct TabHit {
@@ -418,10 +743,15 @@ pub struct App {
     pub prompt: Prompt,
     pub message: Option<String>,
     pub is_error: bool,
+    /// A status-line override installed by a script with `set_status`.
+    /// `None` restores the built-in status line.
+    pub custom_status: Option<String>,
     pub theme: Theme,
     /// The name of the active theme, e.g. `dark` or `monokai`.
     pub theme_name: String,
     pub dark_theme: bool,
+    /// Themes loaded from `~/.config/fast-text/themes/*.toml`.
+    pub user_themes: Vec<Theme>,
     pub show_help: bool,
     pub clipboard: String,
     pub last_search: Option<String>,
@@ -433,6 +763,21 @@ pub struct App {
     /// Last known content viewport (rows, cols), updated during draw.
     pub viewport_rows: u16,
     pub viewport_cols: u16,
+    /// The rectangle the text area occupied on the last draw, including the
+    /// gutter. Used to turn mouse clicks into buffer positions.
+    pub editor_area: Rect,
+    /// Rendered text areas and their screen-row → document-line maps.
+    /// Diagnostic overlay rows are intentionally absent, so clicking one does
+    /// nothing.
+    pub editor_hits: Vec<EditorHit>,
+    /// How the open buffers are arranged into panes.
+    pub panes: PaneLayout,
+    /// Anchor character index while the left mouse button is dragging.
+    mouse_drag: Option<usize>,
+    /// Draw LSP messages under the line they belong to.
+    pub inline_diagnostics: bool,
+    /// Vim-style Normal/Insert/Visual layer (off by default).
+    pub vim: VimState,
     /// Loaded Rhai plugins.
     pub plugins: PluginHost,
     /// Loaded TextWrite editor scripts.
@@ -466,6 +811,13 @@ pub struct App {
     pub sidebar: Sidebar,
     /// Clickable tab-bar regions, refreshed on every draw.
     pub tab_hits: Vec<TabHit>,
+    /// Cached workspace index for the fuzzy file finder.
+    pub file_finder: Option<FileFinder>,
+    /// When undo snapshots were last written, for the periodic autosave.
+    last_persist: Instant,
+    /// True while a lifecycle hook is running, so `save()` inside
+    /// `on_buffer_save` cannot recurse forever.
+    in_hook: bool,
     /// `[keys]` from `config.toml`: user bindings, the highest precedence.
     pub keybindings: HashMap<KeySpec, String>,
     /// Where `config.toml` was read from (or would be written to).
@@ -502,6 +854,12 @@ pub struct App {
     update_rx: Option<Receiver<UpdateEvent>>,
     /// Cloneable sender so every worker can report back.
     update_tx: Option<Sender<UpdateEvent>>,
+    /// Language-server install consent/progress dialog.
+    pub lsp_install: LspInstallState,
+    /// Receiver for language-server installer threads.
+    lsp_install_rx: Option<Receiver<LspInstallEvent>>,
+    /// Cloneable sender for language-server installer threads.
+    lsp_install_tx: Option<Sender<LspInstallEvent>>,
 }
 
 /// The sentinel the console's shell prints after every command so the editor
@@ -590,17 +948,24 @@ impl App {
 
     /// Builds an editor, applying the settings and keybindings from `config`.
     pub fn with_config(files: Vec<PathBuf>, config: Config) -> Self {
+        Self::with_config_and_layout(files, config, false)
+    }
+
+    /// Builds an editor, optionally arranging the files into split panes
+    /// (`ft -O file1 file2`). Without `-O` every file is a tab in one pane.
+    pub fn with_config_and_layout(files: Vec<PathBuf>, config: Config, split: bool) -> Self {
         // `FAST_TEXT_LSP=0` still wins, so a stray config can't force LSP on.
         let lsp = config.lsp && lsp_enabled();
-        let mut app = Self::base(files, lsp);
+        let mut app = Self::base(files, lsp, split);
         let warnings = app.apply_config(config);
         if !warnings.is_empty() {
             app.set_error(format!("fast-text: {}", warnings.join("; ")));
         }
+        app.run_buffer_hooks("on_buffer_open");
         app
     }
 
-    fn base(files: Vec<PathBuf>, lsp: bool) -> Self {
+    fn base(files: Vec<PathBuf>, lsp: bool, split: bool) -> Self {
         let mut editors = Vec::new();
         for path in files {
             match Editor::open_or_new(path.clone()) {
@@ -610,13 +975,27 @@ impl App {
         }
         if editors.is_empty() {
             editors.push(Editor::from_text(
-                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P runs a plugin command  ·  Alt+R runs a TextWrite automation.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// In the explorer: n = new file  ·  N = new folder  ·  Enter opens.\n// Alt+C opens the terminal  ·  cd persists between commands, Esc closes it.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
+                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P finds files  ·  Ctrl+Shift+P runs commands  ·  Alt+R runs TextWrite.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// In the explorer: n = new file  ·  N = new folder  ·  Enter opens.\n// Alt+C opens the terminal  ·  cd persists between commands, Esc closes it.\n// Alt+V toggles Vim  ·  Alt+: opens the : command bar.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+Shift+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
                 LanguageId::Rust,
             ));
         }
+        let count = editors.len();
+        let panes = if split && count > 1 {
+            PaneLayout::horizontal_chain(0..count)
+        } else {
+            PaneLayout::Leaf(0)
+        };
         let sidebar = Sidebar::new(default_root(&editors));
         let plugin_manager = PluginManager::discover(plugin_dirs(), plugins_state_path());
         let (plugins, scripts) = plugin_manager.build_hosts();
+        let user_themes = match Config::theme_dir() {
+            Some(dir) => fast_text_theme::Theme::load_dir(dir)
+                .0
+                .into_iter()
+                .map(Theme::from_shared)
+                .collect(),
+            None => Vec::new(),
+        };
         Self {
             editors,
             active: 0,
@@ -624,9 +1003,11 @@ impl App {
             prompt: Prompt::None,
             message: None,
             is_error: false,
+            custom_status: None,
             theme: Theme::dark(),
             theme_name: "dark".to_string(),
             dark_theme: true,
+            user_themes,
             show_help: false,
             clipboard: String::new(),
             last_search: None,
@@ -635,6 +1016,12 @@ impl App {
             cursor_style: CursorStyle::Bar,
             viewport_rows: 20,
             viewport_cols: 80,
+            editor_area: Rect::default(),
+            editor_hits: Vec::new(),
+            panes,
+            mouse_drag: None,
+            inline_diagnostics: true,
+            vim: VimState::default(),
             plugins,
             scripts,
             plugin_manager,
@@ -651,6 +1038,9 @@ impl App {
             pending: VecDeque::new(),
             sidebar,
             tab_hits: Vec::new(),
+            file_finder: None,
+            last_persist: Instant::now(),
+            in_hook: false,
             keybindings: HashMap::new(),
             config_path: None,
             picker: Picker::new(),
@@ -669,6 +1059,9 @@ impl App {
             update_record_path: Config::path().map(|p| p.with_file_name("update-record")),
             update_rx: None,
             update_tx: None,
+            lsp_install: LspInstallState::Idle,
+            lsp_install_rx: None,
+            lsp_install_tx: None,
         }
     }
 
@@ -863,6 +1256,12 @@ impl App {
         let mut warnings = config.warnings;
         let theme = config.theme.clone();
         self.cursor_style = config.cursor_style;
+        self.inline_diagnostics = config.inline_diagnostics;
+        self.vim = if config.vim {
+            VimState::enabled()
+        } else {
+            VimState::default()
+        };
         // Plugin-defined themes are known by now (the hosts were built first),
         // so an unknown name is a real mistake worth reporting.
         if !self.apply_theme_name(&theme) {
@@ -1006,6 +1405,7 @@ impl App {
             EditorAction::Undo => self.editor_mut().doc.undo(),
             EditorAction::Redo => self.editor_mut().doc.redo(),
             EditorAction::Save => self.save(),
+            EditorAction::Format => self.format_document(),
             EditorAction::SetLanguage(name) => {
                 let lang = LanguageId::from_name(&name);
                 self.editor_mut().set_language(lang);
@@ -1019,10 +1419,30 @@ impl App {
                     self.set_error(format!("Unknown theme: {name}"));
                 }
             }
+            EditorAction::SetStatus(text) => self.custom_status = text,
             // Consumed by `schedule`; a stray one is a no-op.
             EditorAction::Wait(_) => {}
             EditorAction::Message(msg) => self.set_message(msg),
         }
+    }
+
+    /// Runs the named lifecycle hook (`on_buffer_open`, `on_buffer_save`) for
+    /// every loaded Rhai plugin and TextWrite script, applying the actions they
+    /// request.
+    ///
+    /// A hook that calls `save()` or `format()` cannot re-enter itself: the
+    /// `in_hook` guard turns the nested call into a no-op. Missing hooks are
+    /// silently skipped, so only scripts that opt in pay any cost.
+    fn run_buffer_hooks(&mut self, name: &str) {
+        if self.in_hook {
+            return;
+        }
+        self.in_hook = true;
+        let ctx = self.plugin_context();
+        let mut actions = self.plugins.run_hook(name, &ctx);
+        actions.extend(self.scripts.run_hook(name, &ctx));
+        self.apply_actions(actions);
+        self.in_hook = false;
     }
 
     /// Runs a Rhai plugin or TextWrite script command by title.
@@ -1244,6 +1664,15 @@ impl App {
                     input: String::new(),
                 }
             }
+            "file_finder" | "goto_file" => self.open_file_finder(),
+            "toggle_console" | "console" => self.console_visible = !self.console_visible,
+            "repl" | "textwrite_repl" => {
+                self.prompt = Prompt::Eval {
+                    input: String::new(),
+                }
+            }
+            "cursor_above" => self.editor_mut().doc.add_caret_above(),
+            "cursor_below" => self.editor_mut().doc.add_caret_below(),
             "complete" => self.trigger_completion(),
             "hover" => self.show_hover(),
             "definition" | "goto_definition" => self.goto_definition(),
@@ -1297,6 +1726,42 @@ impl App {
                 }
             }
             "check_updates" | "check_for_updates" | "update_check" => self.begin_update_check(true),
+            "install_language_server" | "install_lsp" => {
+                let language = self.editor().language;
+                self.offer_lsp_install(language);
+            }
+            "retry_language_server" | "retry_lsp" => {
+                let language = self.editor().language;
+                self.lsp.retry(language);
+                self.set_message(format!("Retrying the {} language server", language.name()));
+            }
+            "split_pane_right" | "split_pane" | "split_horizontal" => {
+                self.split_active(SplitDirection::Horizontal);
+            }
+            "split_pane_down" | "split_vertical" => {
+                self.split_active(SplitDirection::Vertical);
+            }
+            "close_pane" | "close_split" => self.close_buffer(),
+            "focus_next_pane" | "next_pane" => self.focus_pane(1),
+            "focus_previous_pane" | "prev_pane" | "previous_pane" => self.focus_pane(-1),
+            "restore_default_status_line" | "clear_status" => {
+                self.custom_status = None;
+                self.set_message("Status line restored");
+            }
+            "command_line" | "command_bar" => {
+                self.prompt = Prompt::CommandLine {
+                    input: String::new(),
+                }
+            }
+            "vim" | "toggle_vim" => self.toggle_vim(),
+            "toggle_inline_diagnostics" | "inline_diagnostics" => {
+                self.inline_diagnostics = !self.inline_diagnostics;
+                self.set_message(if self.inline_diagnostics {
+                    "Inline diagnostics on"
+                } else {
+                    "Inline diagnostics off"
+                });
+            }
             _ => {
                 if let Some(name) = id.strip_prefix("theme_") {
                     return self.apply_theme_name(&name.replace('_', "-"));
@@ -1639,14 +2104,41 @@ impl App {
         titles
     }
 
-    /// Command titles matching a substring query.
+    /// Command titles matching a fuzzy query, best match first.
     pub fn command_matches(&self, query: &str) -> Vec<String> {
-        let q = query.trim().to_ascii_lowercase();
-        let mut titles = self.command_titles();
-        if !q.is_empty() {
-            titles.retain(|t| t.to_ascii_lowercase().contains(&q));
+        if query.trim().is_empty() {
+            return self.command_titles();
         }
-        titles
+        let mut scored: Vec<(i64, String)> = self
+            .command_titles()
+            .into_iter()
+            .filter_map(|title| {
+                fast_text_core::fuzzy::fuzzy_match(query, &title).map(|score| (score, title))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        scored.into_iter().map(|(_, title)| title).collect()
+    }
+
+    /// Opens the fuzzy file finder rooted at the explorer's folder.
+    pub fn open_file_finder(&mut self) {
+        let root = self.sidebar.root().to_path_buf();
+        match &mut self.file_finder {
+            Some(finder) if finder.root() == root => finder.refresh(),
+            _ => self.file_finder = Some(FileFinder::new(root)),
+        }
+        self.prompt = Prompt::FileFinder {
+            input: String::new(),
+            selected: 0,
+        };
+    }
+
+    /// The current fuzzy file matches for the finder prompt.
+    pub fn file_matches(&self, query: &str) -> Vec<fast_text_core::fuzzy::FileHit> {
+        self.file_finder
+            .as_ref()
+            .map(|finder| finder.search(query, 8))
+            .unwrap_or_default()
     }
 
     /// Evaluates a TextWrite snippet against the active buffer, applying any
@@ -1726,14 +2218,145 @@ impl App {
     /// freshly published diagnostics.
     pub fn tick(&mut self) {
         self.poll_update_events();
+        self.poll_lsp_install_events();
         self.run_pending();
         if !self.lsp.is_enabled() {
             return;
         }
-        // Sync every open editor so background buffers stay current too.
+        // Sync every open editor so background buffers stay current too. The
+        // first missing server with an install recipe becomes a consent offer;
+        // only one dialog is shown at a time.
+        let mut missing = None;
         for ed in &self.editors {
-            self.lsp.sync(ed);
+            if let Some(lang) = self.lsp.sync(ed) {
+                missing.get_or_insert(lang);
+            }
         }
+        if let Some(lang) = missing {
+            self.offer_lsp_install(lang);
+        }
+    }
+
+    /// Shows the consent dialog for a missing language server, if we know one.
+    /// Explicit palette commands can re-offer a language the user declined;
+    /// the automatic path goes through `LspManager::sync` first.
+    fn offer_lsp_install(&mut self, language: fast_text_syntax::LanguageId) {
+        if self.lsp_install.is_dialog_open() {
+            return;
+        }
+        let Some(hint) = crate::lsp::install_hint(language) else {
+            if language.lsp_id().is_some() {
+                self.set_message(format!(
+                    "No automatic install is known for {} — see the docs for its language server",
+                    language.name()
+                ));
+            }
+            return;
+        };
+        self.lsp.mark_offered(language);
+        self.lsp_install = LspInstallState::Offer { hint };
+    }
+
+    /// Skips the install for this session, remembering the choice in the LSP
+    /// manager so the offer does not reappear on every tick.
+    fn decline_lsp_install(&mut self, hint: &InstallHint) {
+        self.lsp.decline(hint.language);
+        self.lsp_install = LspInstallState::Idle;
+        self.set_message(format!(
+            "{} left uninstalled — run '{}' to enable LSP later",
+            hint.program,
+            hint.command_line()
+        ));
+    }
+
+    /// Runs the consented install command on a background worker. Nothing is
+    /// spawned until the user explicitly accepts the dialog.
+    fn begin_lsp_install(&mut self, hint: &InstallHint) {
+        let language = hint.language;
+        let program = hint.program.clone();
+        self.lsp_install = LspInstallState::Installing {
+            language,
+            program: program.clone(),
+        };
+        let command = hint.command.clone();
+        let Some(tx) = self.lsp_install_sender() else {
+            self.lsp_install = LspInstallState::Failed {
+                language,
+                error: "no installer worker available".to_string(),
+            };
+            return;
+        };
+        spawn_worker(move || {
+            let result = run_install_command(&command);
+            let _ = tx.send(LspInstallEvent::Finished { language, result });
+        });
+    }
+
+    /// Lazily creates the channel installer threads report back through.
+    fn lsp_install_sender(&mut self) -> Option<Sender<LspInstallEvent>> {
+        if self.lsp_install_tx.is_none() {
+            let (tx, rx) = mpsc::channel();
+            self.lsp_install_tx = Some(tx.clone());
+            self.lsp_install_rx = Some(rx);
+        }
+        self.lsp_install_tx.clone()
+    }
+
+    /// Drains installer events (called on every tick).
+    fn poll_lsp_install_events(&mut self) {
+        let mut events = Vec::new();
+        if let Some(rx) = &self.lsp_install_rx {
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+        }
+        for event in events {
+            self.apply_lsp_install_event(event);
+        }
+    }
+
+    /// Folds one installer result into the dialog state.
+    fn apply_lsp_install_event(&mut self, event: LspInstallEvent) {
+        let LspInstallEvent::Finished { language, result } = event;
+        match result {
+            Ok(()) => {
+                // Forget the missing-server decision so the next tick probes
+                // PATH again and starts the freshly installed server.
+                self.lsp.retry(language);
+                self.lsp_install = LspInstallState::Idle;
+                self.set_message(format!(
+                    "Language server installed — starting it for {}",
+                    language.name()
+                ));
+            }
+            Err(error) => {
+                self.lsp.decline(language);
+                self.lsp_install = LspInstallState::Failed {
+                    language,
+                    error: error.clone(),
+                };
+                self.set_error(format!("Language-server install failed: {error}"));
+            }
+        }
+    }
+
+    /// Handles keys while the install dialog is open.
+    fn handle_lsp_install_key(&mut self, key: KeyEvent) -> bool {
+        let yes = matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter);
+        let no = matches!(key.code, KeyCode::Char('n' | 'N') | KeyCode::Esc);
+        match self.lsp_install.clone() {
+            LspInstallState::Offer { hint } => {
+                if yes {
+                    self.begin_lsp_install(&hint);
+                } else if no {
+                    self.decline_lsp_install(&hint);
+                }
+            }
+            // A failure closes on any key; a running install runs to the end.
+            LspInstallState::Failed { .. } => self.lsp_install = LspInstallState::Idle,
+            LspInstallState::Installing { .. } | LspInstallState::Idle => {}
+        }
+        true
     }
 
     /// Diagnostics for the active buffer.
@@ -2249,6 +2872,15 @@ impl App {
             return Some((theme, canonical, dark));
         }
         let wanted = normalize_name(trimmed);
+        if let Some(theme) = self
+            .user_themes
+            .iter()
+            .find(|candidate| normalize_name(&candidate.name) == wanted)
+        {
+            let dark = theme.dark;
+            let name = theme.name.clone();
+            return Some((theme.clone(), name, dark));
+        }
         for (candidate, colors) in self.scripts.themes() {
             if normalize_name(&candidate) == wanted {
                 let (theme, _) = Theme::from_colors(&colors);
@@ -2280,6 +2912,9 @@ impl App {
             .iter()
             .map(|name| format!("Theme: {}", theme_display_name(name)))
             .collect();
+        for theme in &self.user_themes {
+            titles.push(format!("Theme: {}", theme.name));
+        }
         for name in self.scripts.theme_names() {
             titles.push(format!("Theme: {name}"));
         }
@@ -2294,6 +2929,59 @@ impl App {
         self.set_message("New buffer");
     }
 
+    /// Writes an undo snapshot for every named buffer.
+    pub fn persist_undo(&mut self) {
+        for editor in &self.editors {
+            if editor.doc.path().is_some() {
+                let _ = fast_text_core::undo::save(&editor.doc);
+            }
+        }
+        self.last_persist = Instant::now();
+    }
+
+    /// Writes snapshots at most every few seconds while editing, so a killed
+    /// terminal loses at most that much history.
+    fn autosave_undo(&mut self) {
+        if self.last_persist.elapsed() >= Duration::from_secs(5)
+            && self.editors.iter().any(|e| e.doc.is_dirty())
+        {
+            self.persist_undo();
+        }
+    }
+
+    /// Opens an empty buffer in a new pane beside the active one.
+    pub fn split_active(&mut self, direction: SplitDirection) {
+        if !self.panes.contains(self.active) {
+            self.panes = PaneLayout::Leaf(self.active);
+        }
+        let new_index = self.editors.len();
+        self.editors.push(Editor::from_text("", LanguageId::Plain));
+        self.panes.split(self.active, new_index, direction);
+        self.active = new_index;
+        self.set_message(format!(
+            "Split {} pane (Ctrl+arrows focus, Ctrl+W closes)",
+            match direction {
+                SplitDirection::Horizontal => "right",
+                SplitDirection::Vertical => "down",
+            }
+        ));
+    }
+
+    /// Moves focus to the next or previous pane in reading order.
+    pub fn focus_pane(&mut self, delta: isize) {
+        let next = if delta < 0 {
+            self.panes.previous_leaf(self.active)
+        } else {
+            self.panes.next_leaf(self.active)
+        };
+        if let Some(index) = next {
+            if index != self.active {
+                self.active = index;
+                self.set_message(format!("Pane: {}", self.editor().title()));
+            }
+        }
+    }
+
     fn close_buffer(&mut self) {
         if self.editors.len() == 1 {
             self.editor_mut().doc = Document::new();
@@ -2303,7 +2991,27 @@ impl App {
             self.set_message("Cleared buffer");
             return;
         }
-        let removed = self.editors.remove(self.active);
+        let closed = self.active;
+        // In a single pane the remaining buffers are still tabs; keep the old
+        // "focus the next tab" behaviour instead of resetting to the first.
+        let multi_pane = self.panes.leaves().len() > 1;
+        let mut focus = multi_pane.then(|| self.panes.remove(closed)).flatten();
+        let removed = self.editors.remove(closed);
+        if multi_pane {
+            self.panes.shift_after(closed);
+        }
+        if self.panes.is_empty() {
+            self.panes = PaneLayout::Leaf(0);
+        }
+        focus = focus.map(|index| if index > closed { index - 1 } else { index });
+        self.active = focus.unwrap_or(closed).min(self.editors.len() - 1);
+        if let Some(path) = removed.doc.path() {
+            if removed.doc.is_dirty() {
+                let _ = fast_text_core::undo::save(&removed.doc);
+            } else {
+                let _ = fast_text_core::undo::clear(path);
+            }
+        }
         if removed.doc.is_dirty() {
             self.set_message(format!(
                 "Closed {} (unsaved changes discarded)",
@@ -2325,6 +3033,7 @@ impl App {
             .position(|e| e.doc.path() == Some(path.as_path()))
         {
             self.active = idx;
+            self.run_buffer_hooks("on_buffer_open");
             return;
         }
         match Editor::open_or_new(path.clone()) {
@@ -2336,6 +3045,7 @@ impl App {
                 } else {
                     self.set_message(format!("New file {}", path.display()));
                 }
+                self.run_buffer_hooks("on_buffer_open");
             }
             Err(err) => self.set_error(format!("Cannot open {}: {err}", path.display())),
         }
@@ -2511,7 +3221,14 @@ impl App {
     /// Handles one mouse event, returning true when the UI should redraw.
     pub fn handle_mouse(&mut self, event: MouseEvent) -> bool {
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => self.click(event.column, event.row),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.click(event.column, event.row, event.modifiers)
+            }
+            MouseEventKind::Drag(MouseButton::Left) => self.drag(event.column, event.row),
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.mouse_drag = None;
+                true
+            }
             MouseEventKind::ScrollUp if self.picker.is_open() => {
                 self.picker
                     .handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
@@ -2542,12 +3259,76 @@ impl App {
                 self.sidebar.scroll_by(3);
                 true
             }
+            MouseEventKind::ScrollUp => self.scroll_editor_at(event.column, event.row, -3, 0),
+            MouseEventKind::ScrollDown => self.scroll_editor_at(event.column, event.row, 3, 0),
+            MouseEventKind::ScrollLeft => self.scroll_editor_at(event.column, event.row, 0, -4),
+            MouseEventKind::ScrollRight => self.scroll_editor_at(event.column, event.row, 0, 4),
             _ => false,
         }
     }
 
+    /// Scrolls the pane under the mouse without moving its caret. The next key
+    /// press clears the offset, so the caret is always reachable again.
+    fn scroll_editor_at(&mut self, column: u16, row: u16, lines: isize, columns: isize) -> bool {
+        let Some(index) = self
+            .editor_hits
+            .iter()
+            .find(|hit| rect_contains(hit.area, column, row))
+            .map(|hit| hit.editor)
+        else {
+            return false;
+        };
+        let Some(ed) = self.editors.get_mut(index) else {
+            return false;
+        };
+        let max_line = ed.doc.buffer().len_lines().saturating_sub(1);
+        ed.scroll_line = (ed.scroll_line as isize + lines).clamp(0, max_line as isize) as usize;
+        ed.scroll_col = (ed.scroll_col as isize + columns).max(0) as usize;
+        ed.free_scroll = true;
+        true
+    }
+
+    /// Starts or extends a click-drag selection in the text area.
+    fn drag(&mut self, column: u16, row: u16) -> bool {
+        let Some(anchor) = self.mouse_drag else {
+            return false;
+        };
+        let Some(index) = self.index_at_screen(column, row) else {
+            return false;
+        };
+        let ed = self.editor_mut();
+        ed.free_scroll = false;
+        ed.doc.select(anchor, index);
+        true
+    }
+
+    /// Converts a screen cell in any text pane to a buffer character index,
+    /// focusing the pane that was clicked.
+    fn index_at_screen(&mut self, column: u16, row: u16) -> Option<usize> {
+        let (editor, area, line) = {
+            let hit = self
+                .editor_hits
+                .iter()
+                .find(|hit| rect_contains(hit.area, column, row))?;
+            let line = hit.rows.iter().find(|(y, _)| *y == row).map(|(_, l)| *l)?;
+            (hit.editor, hit.area, line)
+        };
+        self.active = editor;
+        let gutter = crate::ui::gutter_width(self);
+        let text_x = area.x + gutter;
+        let ed = &self.editors[editor];
+        let display = if column < text_x {
+            0
+        } else {
+            ed.scroll_col + (column - text_x) as usize
+        };
+        let text = ed.doc.buffer().line_str(line);
+        let col = char_col_at_display(&text, display);
+        Some(ed.doc.index_of(Position::new(line, col)))
+    }
+
     /// Handles a left click at a screen cell.
-    fn click(&mut self, column: u16, row: u16) -> bool {
+    fn click(&mut self, column: u16, row: u16, modifiers: KeyModifiers) -> bool {
         // The update dialog is modal: a click hits one of its buttons.
         if self.update.is_dialog_open() {
             if let Some(button) = self
@@ -2574,10 +3355,10 @@ impl App {
             }
             return true;
         }
-        self.click_editor(column, row)
+        self.click_editor(column, row, modifiers)
     }
 
-    fn click_editor(&mut self, column: u16, row: u16) -> bool {
+    fn click_editor(&mut self, column: u16, row: u16, modifiers: KeyModifiers) -> bool {
         // The plugin manager is modal: it takes every click while open.
         if self.plugin_manager.is_open() {
             if let Some(index) = self.plugin_manager.row_at(column, row) {
@@ -2628,6 +3409,19 @@ impl App {
         if self.sidebar.focused() {
             self.sidebar.unfocus();
         }
+        // Text area: place the caret, or extend the selection with Shift.
+        if let Some(index) = self.index_at_screen(column, row) {
+            let ed = self.editor_mut();
+            ed.free_scroll = false;
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                let anchor = ed.doc.selection().anchor;
+                ed.doc.select(anchor, index);
+            } else {
+                ed.doc.set_cursor(index);
+                self.mouse_drag = Some(index);
+            }
+            return true;
+        }
         false
     }
 
@@ -2642,8 +3436,10 @@ impl App {
         }
         match self.editors[self.active].doc.save() {
             Ok(()) => {
+                let _ = fast_text_core::undo::save(&self.editors[self.active].doc);
                 let title = self.editors[self.active].title();
                 self.set_message(format!("Saved {title}"));
+                self.run_buffer_hooks("on_buffer_save");
             }
             Err(e) => self.set_error(format!("Save failed: {e}")),
         }
@@ -2658,7 +3454,9 @@ impl App {
         match ed.doc.save_as(path.clone()) {
             Ok(()) => {
                 ed.language = LanguageId::from_path(&path.to_string_lossy());
+                let _ = fast_text_core::undo::save(&ed.doc);
                 self.set_message(format!("Saved {}", path.display()));
+                self.run_buffer_hooks("on_buffer_save");
             }
             Err(e) => self.set_error(format!("Save failed: {e}")),
         }
@@ -3007,6 +3805,7 @@ impl App {
 
     /// Handles one key event. Returns true if the app should redraw.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        self.autosave_undo();
         // A replaying macro must not be re-recorded, and cannot nest.
         if self.replaying {
             return self.dispatch_key(key);
@@ -3024,6 +3823,11 @@ impl App {
         // The self-update dialog is modal and outranks everything else.
         if self.update.is_dialog_open() {
             return self.handle_update_key(key);
+        }
+        // The language-server consent dialog is modal too: a stray `y` should
+        // never end up inserted into the buffer.
+        if self.lsp_install.is_dialog_open() {
+            return self.handle_lsp_install_key(key);
         }
         if self.show_help {
             self.show_help = false;
@@ -3054,21 +3858,34 @@ impl App {
                 self.prompt = Prompt::None;
             }
             KeyCode::Enter => self.commit_prompt(),
-            KeyCode::Up => {
-                if let Prompt::Language { selected, .. } = &mut self.prompt {
+            KeyCode::Up => match &mut self.prompt {
+                Prompt::Language { selected, .. } | Prompt::FileFinder { selected, .. } => {
                     *selected = selected.saturating_sub(1);
                     moved_selection = true;
                 }
-            }
+                _ => {}
+            },
             KeyCode::Down => {
                 let current = match &self.prompt {
-                    Prompt::Language { input, selected } => Some((input.clone(), *selected)),
+                    Prompt::Language { input, selected } => Some((input.clone(), *selected, true)),
+                    Prompt::FileFinder { input, selected } => {
+                        Some((input.clone(), *selected, false))
+                    }
                     _ => None,
                 };
-                if let Some((input, selected)) = current {
-                    let max = self.language_matches(&input).len().saturating_sub(1);
-                    if let Prompt::Language { selected: s, .. } = &mut self.prompt {
-                        *s = (selected + 1).min(max);
+                if let Some((input, selected, language)) = current {
+                    let max = if language {
+                        self.language_matches(&input).len()
+                    } else {
+                        self.file_matches(&input).len()
+                    }
+                    .saturating_sub(1);
+                    match &mut self.prompt {
+                        Prompt::Language { selected: s, .. }
+                        | Prompt::FileFinder { selected: s, .. } => {
+                            *s = (selected + 1).min(max);
+                        }
+                        _ => {}
                     }
                     moved_selection = true;
                 }
@@ -3087,9 +3904,93 @@ impl App {
         }
         // Editing the query resets the picker highlight to the best match.
         if !moved_selection {
-            if let Prompt::Language { selected, .. } = &mut self.prompt {
-                *selected = 0;
+            match &mut self.prompt {
+                Prompt::Language { selected, .. } | Prompt::FileFinder { selected, .. } => {
+                    *selected = 0;
+                }
+                _ => {}
             }
+        }
+    }
+
+    /// Runs the `:` command bar. Unknown commands are evaluated as TextWrite,
+    /// so the bar doubles as a REPL (`:selected_text.len()`).
+    fn run_command_line(&mut self, input: &str) {
+        let input = input.trim();
+        if input.is_empty() {
+            return;
+        }
+        let (command, argument) = match input.split_once(char::is_whitespace) {
+            Some((command, rest)) => (command, rest.trim()),
+            None => (input, ""),
+        };
+        match command {
+            "w" | "write" => self.save(),
+            "wq" | "x" => {
+                self.save();
+                if !self.editor().doc.is_dirty() {
+                    self.close_buffer();
+                }
+            }
+            "q" | "quit" => {
+                if self.editor().doc.is_dirty() {
+                    self.set_error(
+                        "Unsaved changes — use :wq to save or :q! to discard".to_string(),
+                    );
+                } else {
+                    self.close_buffer();
+                }
+            }
+            "q!" | "quit!" => self.close_buffer(),
+            "e" | "edit" | "open" => {
+                if argument.is_empty() {
+                    self.prompt = Prompt::OpenFile {
+                        input: String::new(),
+                    };
+                } else {
+                    self.open_path(PathBuf::from(argument.trim_matches('"')));
+                }
+            }
+            "theme" => {
+                let name = argument.trim_matches('"');
+                if name.is_empty() {
+                    self.toggle_theme();
+                } else if self.apply_theme_name(name) {
+                    // `apply_theme_name` already posted the message.
+                } else {
+                    self.set_error(format!("Unknown theme '{name}'"));
+                }
+            }
+            "set" => self.apply_set_command(argument),
+            "help" | "h" => self.show_help = true,
+            "noh" | "nohlsearch" => self.message = None,
+            "ls" | "files" => {
+                let names: Vec<String> = self.editors.iter().map(|ed| ed.title()).collect();
+                self.set_message(names.join("  "));
+            }
+            _ => self.eval_script(input),
+        }
+    }
+
+    fn apply_set_command(&mut self, argument: &str) {
+        match argument {
+            "vim" => {
+                self.vim = VimState::enabled();
+                self.set_message("Vim mode: NORMAL (i to insert, Esc to leave)");
+            }
+            "novim" => {
+                self.vim = VimState::default();
+                self.set_message("Vim mode off");
+            }
+            "diagnostics" | "inline_diagnostics" => {
+                self.inline_diagnostics = true;
+                self.set_message("Inline diagnostics on");
+            }
+            "nodiagnostics" | "noinline_diagnostics" => {
+                self.inline_diagnostics = false;
+                self.set_message("Inline diagnostics off");
+            }
+            other => self.set_error(format!("Unknown :set option '{other}'")),
         }
     }
 
@@ -3156,8 +4057,20 @@ impl App {
             }
             Prompt::Automation { input } => self.run_automation(&input),
             Prompt::Eval { input } => self.eval_script(&input),
+            Prompt::CommandLine { input } => self.run_command_line(&input),
             Prompt::OpenFolder { input } => self.open_folder(input.trim()),
             Prompt::InstallPlugin { input } => self.install_plugin(input.trim()),
+            Prompt::FileFinder { input, selected } => {
+                let matches = self.file_matches(&input);
+                let idx = selected.min(matches.len().saturating_sub(1));
+                match matches.get(idx) {
+                    Some(hit) => {
+                        let path = hit.path.clone();
+                        self.open_path(path);
+                    }
+                    None => self.set_message("No matching files"),
+                }
+            }
             Prompt::FindInFiles { input } => self.open_find_in_files(input.trim()),
             Prompt::Rename { input } => self.rename_symbol(input.trim()),
             Prompt::SaveMacro { input } => self.save_macro(input.trim()),
@@ -3166,6 +4079,7 @@ impl App {
 
     fn handle_editor_key(&mut self, key: KeyEvent) -> bool {
         self.message = None;
+        self.editor_mut().free_scroll = false;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -3208,6 +4122,22 @@ impl App {
             self.toggle_sidebar();
             return true;
         }
+        if ctrl && shift && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+            let input = self
+                .editor()
+                .doc
+                .path()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.prompt = Prompt::SaveAs { input };
+            return true;
+        }
+        if ctrl && shift && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
+            self.prompt = Prompt::Command {
+                input: String::new(),
+            };
+            return true;
+        }
         if ctrl && shift && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O')) {
             self.prompt = Prompt::OpenFolder {
                 input: self.sidebar.root().to_string_lossy().into_owned(),
@@ -3233,9 +4163,43 @@ impl App {
             return true;
         }
 
+        // The optional Vim layer intercepts character keys in Normal/Visual
+        // mode. Ctrl/Alt shortcuts, function keys and arrows still reach the
+        // regular handler, so saving and LSP features keep working.
+        if self.vim.mode == VimMode::Insert && key.code == KeyCode::Esc {
+            self.vim = VimState {
+                mode: VimMode::Normal,
+                pending: None,
+            };
+            self.editor_mut().doc.collapse_selection();
+            return true;
+        }
+        if self.vim.intercepts()
+            && !ctrl
+            && !alt
+            && matches!(
+                key.code,
+                KeyCode::Char(_) | KeyCode::Esc | KeyCode::Backspace | KeyCode::Enter
+            )
+        {
+            self.handle_vim_key(key);
+            return true;
+        }
+
         // Control / function commands first.
         if ctrl {
             match key.code {
+                // With more than one pane, Ctrl+arrows move focus between
+                // them. With a single pane they keep their editing meaning
+                // (Ctrl+Left/Right word motion, Ctrl+Up/Down caret motion).
+                KeyCode::Left | KeyCode::Up if self.panes.leaves().len() > 1 => {
+                    self.focus_pane(-1);
+                    return true;
+                }
+                KeyCode::Right | KeyCode::Down if self.panes.leaves().len() > 1 => {
+                    self.focus_pane(1);
+                    return true;
+                }
                 KeyCode::Char('q') => {
                     self.quit();
                     return true;
@@ -3275,9 +4239,7 @@ impl App {
                     return true;
                 }
                 KeyCode::Char('p') => {
-                    self.prompt = Prompt::Command {
-                        input: String::new(),
-                    };
+                    self.open_file_finder();
                     return true;
                 }
                 KeyCode::Char('e') => {
@@ -3404,6 +4366,9 @@ impl App {
         }
 
         match key.code {
+            KeyCode::F(3) if shift => self.find_next(SearchDirection::Backward),
+            KeyCode::F(3) => self.find_next(SearchDirection::Forward),
+            KeyCode::Char('t') if alt => self.toggle_theme(),
             KeyCode::Char('h') if alt => self.show_help = true,
             KeyCode::Char('r') if alt => {
                 self.prompt = Prompt::Automation {
@@ -3423,6 +4388,14 @@ impl App {
             // Alt+U checks GitHub for a newer release (terminal-independent).
             KeyCode::Char('u') if alt => self.begin_update_check(true),
             KeyCode::Char('c') if alt => self.console_visible = !self.console_visible,
+            // Alt+: opens the command bar from any mode. In Vim Normal mode a
+            // bare `:` does the same (see `handle_vim_key`).
+            KeyCode::Char(':') if alt => {
+                self.prompt = Prompt::CommandLine {
+                    input: String::new(),
+                }
+            }
+            KeyCode::Char('v') if alt => self.toggle_vim(),
             KeyCode::F(2) => {
                 self.prompt = Prompt::SaveAs {
                     input: self
@@ -3433,7 +4406,6 @@ impl App {
                         .unwrap_or_default(),
                 }
             }
-            KeyCode::F(3) => self.find_next(SearchDirection::Forward),
             KeyCode::F(4) => self.find_next(SearchDirection::Backward),
             KeyCode::F(5) => self.show_hover(),
             KeyCode::F(6) => self.toggle_macro_recording(),
@@ -3484,7 +4456,202 @@ impl App {
         true
     }
 
+    /// Enables or disables the Vim layer (`Alt+V`).
+    fn toggle_vim(&mut self) {
+        if self.vim.mode == VimMode::Disabled {
+            self.vim = VimState::enabled();
+            self.set_message("Vim mode: NORMAL (i to insert, : for commands)");
+        } else {
+            self.vim = VimState::default();
+            self.set_message("Vim mode off");
+        }
+    }
+
+    /// Handles one key in Vim Normal/Visual mode.
+    fn handle_vim_key(&mut self, key: KeyEvent) {
+        let visual = matches!(self.vim.mode, VimMode::Visual | VimMode::VisualLine);
+        // A pending operator (`d`, `y`, `g`) combines with the next key.
+        if let Some(operator) = self.vim.pending.take() {
+            match (operator, key.code) {
+                ('d', KeyCode::Char('d')) => self.vim_delete_lines(),
+                ('y', KeyCode::Char('y')) => self.vim_yank_lines(),
+                ('g', KeyCode::Char('g')) => {
+                    self.editor_mut().doc.set_cursor(0);
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.vim = VimState {
+                    mode: VimMode::Normal,
+                    pending: None,
+                };
+                self.editor_mut().doc.collapse_selection();
+            }
+            KeyCode::Backspace => self.editor_mut().doc.move_left(visual),
+            KeyCode::Enter => self.editor_mut().doc.move_down(visual),
+            KeyCode::Char('h') => self.editor_mut().doc.move_left(visual),
+            KeyCode::Char('j') => self.editor_mut().doc.move_down(visual),
+            KeyCode::Char('k') => self.editor_mut().doc.move_up(visual),
+            KeyCode::Char('l') => self.editor_mut().doc.move_right(visual),
+            KeyCode::Char('w') => self.editor_mut().doc.move_word_forward(visual),
+            KeyCode::Char('b') => self.editor_mut().doc.move_word_backward(visual),
+            KeyCode::Char('e') => self.editor_mut().doc.move_word_forward(visual),
+            KeyCode::Char('0') => self.editor_mut().doc.move_line_start(visual),
+            KeyCode::Char('$') => self.editor_mut().doc.move_line_end(visual),
+            KeyCode::Char('G') => {
+                let end = self.editor().doc.buffer().max_char_idx();
+                self.editor_mut().doc.set_cursor(end);
+            }
+            KeyCode::Char('g') => self.vim.pending = Some('g'),
+            KeyCode::Char('d') if visual => {
+                self.vim_copy_selection();
+                self.editor_mut().doc.delete_selection();
+                self.vim.mode = VimMode::Normal;
+            }
+            KeyCode::Char('y') if visual => {
+                self.vim_copy_selection();
+                self.editor_mut().doc.collapse_selection();
+                self.vim.mode = VimMode::Normal;
+                self.set_message("Yanked selection");
+            }
+            KeyCode::Char('c') if visual => {
+                self.vim_copy_selection();
+                self.editor_mut().doc.delete_selection();
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('x') if visual => {
+                self.vim_copy_selection();
+                self.editor_mut().doc.delete_selection();
+                self.vim.mode = VimMode::Normal;
+            }
+            KeyCode::Char('x') => self.editor_mut().doc.delete_forward(),
+            KeyCode::Char('d') => self.vim.pending = Some('d'),
+            KeyCode::Char('y') => self.vim.pending = Some('y'),
+            KeyCode::Char('D') => {
+                self.editor_mut().doc.move_line_end(false);
+                let (start, end) = self.editor().doc.selection_range();
+                self.editor_mut().doc.delete_range(start, end);
+            }
+            KeyCode::Char('C') => {
+                self.editor_mut().doc.move_line_end(false);
+                let (start, end) = self.editor().doc.selection_range();
+                self.editor_mut().doc.delete_range(start, end);
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('s') => {
+                self.editor_mut().doc.delete_forward();
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('J') => self.vim_join_lines(),
+            KeyCode::Char('v') => {
+                if visual {
+                    self.editor_mut().doc.collapse_selection();
+                    self.vim.mode = VimMode::Normal;
+                } else {
+                    let at = self.editor().doc.cursor();
+                    self.editor_mut().doc.select(at, at);
+                    self.vim.mode = VimMode::Visual;
+                }
+            }
+            KeyCode::Char('V') => {
+                if self.vim.mode == VimMode::VisualLine {
+                    self.editor_mut().doc.collapse_selection();
+                    self.vim.mode = VimMode::Normal;
+                } else {
+                    let (start, end) = self.current_line_range();
+                    self.editor_mut().doc.select(start, end);
+                    self.vim.mode = VimMode::VisualLine;
+                }
+            }
+            KeyCode::Char('p') => {
+                let clip = self.clipboard.clone();
+                if !clip.is_empty() {
+                    self.editor_mut().doc.insert_str(&clip);
+                }
+            }
+            KeyCode::Char('u') => self.editor_mut().doc.undo(),
+            KeyCode::Char(':') => {
+                self.prompt = Prompt::CommandLine {
+                    input: String::new(),
+                };
+            }
+            KeyCode::Char('i') => self.vim.mode = VimMode::Insert,
+            KeyCode::Char('a') => {
+                self.editor_mut().doc.move_right(false);
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('A') => {
+                self.editor_mut().doc.move_line_end(false);
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('I') => {
+                self.editor_mut().doc.move_line_start(false);
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('o') => {
+                self.editor_mut().doc.move_line_end(false);
+                self.newline_auto_indent();
+                self.vim.mode = VimMode::Insert;
+            }
+            KeyCode::Char('O') => {
+                self.editor_mut().doc.move_line_start(false);
+                self.newline_auto_indent();
+                self.vim.mode = VimMode::Insert;
+            }
+            _ => {}
+        }
+    }
+
+    /// Copies the active selection without touching the clipboard traits of the
+    /// host terminal (the editor keeps its own yank register).
+    fn vim_copy_selection(&mut self) {
+        let (start, end) = self.editor().doc.selection_range();
+        let text = self.editor().doc.buffer().slice(start, end);
+        self.clipboard = text;
+    }
+
+    /// The character range of the cursor's line, including its newline.
+    fn current_line_range(&self) -> (usize, usize) {
+        let doc = &self.editor().doc;
+        let line = doc.cursor_position().line;
+        let start = doc.index_of(Position::new(line, 0));
+        let end = if line + 1 < doc.buffer().len_lines() {
+            doc.index_of(Position::new(line + 1, 0))
+        } else {
+            doc.buffer().max_char_idx()
+        };
+        (start, end)
+    }
+
+    fn vim_yank_lines(&mut self) {
+        let (start, end) = self.current_line_range();
+        self.clipboard = self.editor().doc.buffer().slice(start, end);
+        self.set_message("Yanked line");
+    }
+
+    fn vim_delete_lines(&mut self) {
+        let (start, end) = self.current_line_range();
+        self.editor_mut().doc.delete_range(start, end);
+    }
+
+    fn vim_join_lines(&mut self) {
+        let ed = self.editor_mut();
+        let doc = &mut ed.doc;
+        let line = doc.cursor_position().line;
+        if line + 1 >= doc.buffer().len_lines() {
+            return;
+        }
+        let start = doc.index_of(Position::new(line, doc.buffer().line_len_chars(line)));
+        let next = doc.index_of(Position::new(line + 1, 0));
+        doc.delete_range(start, next);
+        doc.insert_str(" ");
+    }
+
     fn quit(&mut self) {
+        self.persist_undo();
         let dirty: Vec<String> = self
             .editors
             .iter()
@@ -3534,11 +4701,13 @@ fn prompt_input_mut(prompt: &mut Prompt) -> Option<&mut String> {
         | Prompt::Command { input }
         | Prompt::Automation { input }
         | Prompt::Eval { input }
+        | Prompt::CommandLine { input }
         | Prompt::FindInFiles { input }
         | Prompt::Rename { input }
         | Prompt::SaveMacro { input }
         | Prompt::OpenFolder { input }
-        | Prompt::InstallPlugin { input } => Some(input),
+        | Prompt::InstallPlugin { input }
+        | Prompt::FileFinder { input, .. } => Some(input),
         Prompt::Replace {
             find,
             replace,
@@ -3565,6 +4734,23 @@ fn matching_close(open: char) -> Option<char> {
         '`' => Some('`'),
         _ => None,
     }
+}
+
+/// The character column nearest to a display column, expanding tabs. Used by
+/// mouse clicks so tabs and wide characters land where they are painted.
+fn char_col_at_display(text: &str, display: usize) -> usize {
+    let mut col = 0usize;
+    for (index, ch) in text.chars().enumerate() {
+        if col >= display {
+            return index;
+        }
+        col += if ch == '\t' {
+            4 - (col % 4)
+        } else {
+            UnicodeWidthChar::width(ch).unwrap_or(0).max(1)
+        };
+    }
+    text.chars().count()
 }
 
 /// The opening character that a closing one pairs with.
@@ -3693,6 +4879,35 @@ fn spawn_worker(f: impl FnOnce() + Send + 'static) {
     let _ = f;
 }
 
+/// Runs a consented installer command and reports a compact error.
+///
+/// This is only ever called from the background worker started by
+/// [`App::begin_lsp_install`]; tests never reach it, so no test spawns a
+/// process or touches the network.
+fn run_install_command(command: &[String]) -> Result<(), String> {
+    let Some((program, args)) = command.split_first() else {
+        return Err("the install command is empty".to_string());
+    };
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("could not run {program}: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = stderr
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .unwrap_or("");
+    if detail.is_empty() {
+        Err(format!("{program} exited with {}", output.status))
+    } else {
+        Err(format!("{program}: {detail}"))
+    }
+}
+
 /// Starts a new editor process from the current executable and its arguments.
 fn spawn_restarted_editor() -> std::io::Result<()> {
     #[cfg(test)]
@@ -3707,10 +4922,7 @@ fn spawn_restarted_editor() -> std::io::Result<()> {
 
 /// `$XDG_CONFIG_HOME/fast-text/plugins`, falling back to `~/.config/fast-text/plugins`.
 fn user_plugin_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("fast-text").join("plugins"))
+    crate::registry::plugin_dir()
 }
 
 /// Converts a backend key event into a backend-independent [`KeySpec`].
@@ -3780,7 +4992,7 @@ mod tests {
             r#"
                 fn shout() { insert("SHOUT"); }
                 command("Shout", "shout");
-                bind("ctrl+shift+s", "Shout");
+                bind("ctrl+shift+q", "Shout");
             "#,
         );
     }
@@ -3813,9 +5025,9 @@ mod tests {
         let mut app = empty_app();
         add_demo_plugin(&mut app);
         clear_and_type(&mut app, "");
-        // Ctrl+Shift+S should trigger the plugin's "Shout".
+        // Ctrl+Shift+Q should trigger the plugin's "Shout".
         let ev = KeyEvent::new(
-            KeyCode::Char('S'),
+            KeyCode::Char('Q'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         );
         app.handle_key(ev);
@@ -3827,14 +5039,30 @@ mod tests {
         let mut app = empty_app();
         add_demo_plugin(&mut app);
         clear_and_type(&mut app, "");
-        app.handle_key(ctrl('p'));
+        app.handle_key(KeyEvent::new(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
         assert!(matches!(app.prompt, Prompt::Command { .. }));
         for c in "sho".chars() {
             app.handle_key(key(KeyCode::Char(c)));
         }
-        assert_eq!(app.command_matches("sho"), vec!["Shout".to_string()]);
+        assert_eq!(
+            app.command_matches("sho").first().map(String::as_str),
+            Some("Shout")
+        );
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.editor().doc.text(), "SHOUT");
+    }
+
+    #[test]
+    fn ctrl_p_opens_the_fuzzy_file_finder() {
+        let mut app = empty_app();
+        app.handle_key(ctrl('p'));
+        assert!(matches!(app.prompt, Prompt::FileFinder { .. }));
+        assert!(app.file_finder.is_some());
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.prompt, Prompt::None));
     }
 
     #[test]
@@ -4234,6 +5462,65 @@ mod tests {
         assert!(!app.has_pending(), "nothing should run when compile fails");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn textwrite_buffer_hooks_run_on_open_and_save() {
+        let dir = std::env::temp_dir().join(format!("ft-tui-hooks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hooked.txt");
+        std::fs::write(&path, "hello").unwrap();
+
+        let mut app = empty_app();
+        add_automation_script(
+            &mut app,
+            r#"
+                fn on_buffer_open() {
+                    insert("<open>")
+                }
+                fn on_buffer_save() {
+                    insert("<save>")
+                    save()
+                }
+            "#,
+        );
+        assert!(app.scripts.has_hook("on_buffer_open"));
+        app.open_path(path.clone());
+        assert!(app.editor().doc.text().starts_with("<open>"));
+        assert!(!app.in_hook);
+
+        // `save()` inside `on_buffer_save` must not recurse.
+        app.save();
+        assert!(app.editor().doc.text().contains("<save>"));
+        assert!(!app.in_hook);
+        assert!(!app.is_error, "unexpected error: {:?}", app.message);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rhai_buffer_hooks_run_alongside_textwrite_ones() {
+        let mut app = empty_app();
+        clear_and_type(&mut app, "");
+        app.plugins.add_plugin(
+            "hooks",
+            r#"
+                fn on_buffer_open() { insert("R"); }
+            "#,
+        );
+        app.scripts.add_script(
+            "hooks.tw",
+            r#"
+                fn on_buffer_open() {
+                    insert("T")
+                }
+            "#,
+        );
+        assert!(app.scripts.errors.is_empty(), "{:?}", app.scripts.errors);
+        app.run_buffer_hooks("on_buffer_open");
+        let text = app.editor().doc.text();
+        assert!(text.contains('R'), "{text:?}");
+        assert!(text.contains('T'), "{text:?}");
     }
 
     #[test]
@@ -4686,7 +5973,7 @@ mod tests {
 
     #[test]
     fn a_user_binding_beats_the_built_in_one() {
-        // Ctrl+P normally opens the palette; the config steals it.
+        // Ctrl+Shift+P normally opens the palette; the config steals it.
         let mut app = app_with("[keys]\n\"ctrl+p\" = \"toggle_sidebar\"\n");
         assert!(!app.sidebar.visible());
         app.handle_key(ctrl('p'));
@@ -5389,5 +6676,171 @@ mod tests {
             app.console_output.is_empty(),
             "Ctrl+L clears the scrollback"
         );
+    }
+
+    #[test]
+    fn a_missing_language_server_is_offered_once() {
+        let mut app = empty_app();
+        app.offer_lsp_install(fast_text_syntax::LanguageId::Rust);
+        assert!(
+            matches!(app.lsp_install, LspInstallState::Offer { .. }),
+            "an install recipe exists for Rust"
+        );
+        // While the dialog is open another offer (for a different language)
+        // cannot replace it.
+        app.offer_lsp_install(fast_text_syntax::LanguageId::Python);
+        assert!(matches!(
+            app.lsp_install,
+            LspInstallState::Offer { ref hint } if hint.language == fast_text_syntax::LanguageId::Rust
+        ));
+    }
+
+    #[test]
+    fn declining_a_language_server_does_not_spawn_or_nag() {
+        let mut app = empty_app();
+        app.offer_lsp_install(fast_text_syntax::LanguageId::Python);
+        app.handle_key(key(KeyCode::Char('n')));
+        assert_eq!(app.lsp_install, LspInstallState::Idle);
+        assert!(app.lsp_install_rx.is_none(), "declining spawns nothing");
+        // The manager remembers the decision, so `tick` stays quiet.
+        assert_eq!(
+            app.lsp.offer_for(fast_text_syntax::LanguageId::Python),
+            None
+        );
+    }
+
+    #[test]
+    fn accepting_a_language_server_starts_the_installer() {
+        let mut app = empty_app();
+        let before = app.editor().doc.text();
+        app.offer_lsp_install(fast_text_syntax::LanguageId::Rust);
+        app.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(
+            app.lsp_install,
+            LspInstallState::Installing { .. }
+        ));
+        // Stray editing keys belong to the modal while it is installing.
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.editor().doc.text(), before);
+    }
+
+    #[test]
+    fn an_install_failure_is_reported_and_does_not_reoffer() {
+        let mut app = empty_app();
+        app.offer_lsp_install(fast_text_syntax::LanguageId::Ruby);
+        app.apply_lsp_install_event(LspInstallEvent::Finished {
+            language: fast_text_syntax::LanguageId::Ruby,
+            result: Err("gem not found".to_string()),
+        });
+        assert!(matches!(
+            app.lsp_install,
+            LspInstallState::Failed { ref error, .. } if error == "gem not found"
+        ));
+        assert!(app.is_error);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.lsp_install, LspInstallState::Idle);
+        assert_eq!(
+            app.lsp.offer_for(fast_text_syntax::LanguageId::Ruby),
+            None,
+            "a failed install is not retried automatically"
+        );
+    }
+
+    #[test]
+    fn a_successful_install_clears_the_dialog_and_retries() {
+        let mut app = empty_app();
+        app.offer_lsp_install(fast_text_syntax::LanguageId::Go);
+        app.apply_lsp_install_event(LspInstallEvent::Finished {
+            language: fast_text_syntax::LanguageId::Go,
+            result: Ok(()),
+        });
+        assert_eq!(app.lsp_install, LspInstallState::Idle);
+        assert_eq!(
+            app.lsp.offer_for(fast_text_syntax::LanguageId::Go),
+            Some(fast_text_syntax::LanguageId::Go),
+            "the next tick probes the newly installed server again"
+        );
+    }
+
+    #[test]
+    fn the_palette_can_offer_and_retry_a_language_server() {
+        let mut app = empty_app();
+        app.set_language_by_name("Rust");
+        assert!(app.run_command("Install language server"));
+        assert!(app.lsp_install.is_dialog_open());
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.run_command("Retry language server"));
+        assert_eq!(app.lsp_install, LspInstallState::Idle);
+    }
+
+    // --- Split panes -------------------------------------------------------
+
+    #[test]
+    fn a_layout_chain_visits_every_leaf_and_wraps() {
+        let layout = PaneLayout::horizontal_chain(0..3);
+        assert_eq!(layout.leaves(), vec![0, 1, 2]);
+        assert_eq!(layout.next_leaf(2), Some(0));
+        assert_eq!(layout.previous_leaf(0), Some(2));
+        assert_eq!(layout.first_leaf(), Some(0));
+        assert!(layout.contains(1));
+        assert!(!layout.contains(9));
+    }
+
+    #[test]
+    fn removing_a_leaf_collapses_its_split() {
+        let mut layout = PaneLayout::horizontal_chain(0..3);
+        assert_eq!(
+            layout.remove(1),
+            Some(0),
+            "focus falls back to the left pane"
+        );
+        assert_eq!(layout.leaves(), vec![0, 2]);
+        layout.shift_after(0);
+        assert_eq!(layout.leaves(), vec![0, 1]);
+        assert_eq!(layout.remove(0), Some(1));
+        assert_eq!(layout.leaves(), vec![1]);
+    }
+
+    #[test]
+    fn split_and_focus_keys_work_on_a_multi_pane_app() {
+        let mut app = empty_app();
+        app.split_active(SplitDirection::Horizontal);
+        assert_eq!(app.editors.len(), 2);
+        assert_eq!(app.panes.leaves(), vec![0, 1]);
+        assert_eq!(app.active, 1, "the new pane gets focus");
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL));
+        assert_eq!(app.active, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL));
+        assert_eq!(app.active, 1);
+        // Closing a pane collapses the split and leaves one buffer.
+        app.handle_key(ctrl('w'));
+        assert_eq!(app.editors.len(), 1);
+        assert_eq!(app.panes.leaves(), vec![0]);
+    }
+
+    #[test]
+    fn ctrl_arrows_still_edit_text_with_one_pane() {
+        let mut app = empty_app();
+        set_text(&mut app, "one two");
+        app.editor_mut().doc.set_cursor(7);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL));
+        let pos = app.editor().doc.cursor_position();
+        assert_eq!(pos.col, 4, "Ctrl+Left moves by word in a single pane");
+    }
+
+    #[test]
+    fn with_layout_builds_a_pane_per_file() {
+        let app = App::with_config_and_layout(
+            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")],
+            Config::default(),
+            true,
+        );
+        assert_eq!(app.panes.leaves(), vec![0, 1]);
+        assert_eq!(app.active, 0);
+        let tabs = App::with_config(
+            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")],
+            Config::default(),
+        );
+        assert_eq!(tabs.panes.leaves(), vec![0], "without -O files are tabs");
     }
 }

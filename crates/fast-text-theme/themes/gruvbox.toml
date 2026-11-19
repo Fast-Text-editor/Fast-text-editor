@@ -1,0 +1,33 @@
+# gruvbox — a built-in Fast Text theme.
+name = "gruvbox"
+dark = true
+
+[ui]
+background = "#282828"
+foreground = "#ebdbb2"
+gutter = "#7c6f64"
+gutter_active = "#ebdbb2"
+cursor_line = "#32302f"
+selection = "#504945"
+status_bg = "#3c3836"
+status_fg = "#ebdbb2"
+status_accent = "#83a598"
+prompt_bg = "#32302f"
+tab_active = "#fabd2f"
+tab_inactive = "#7c6f64"
+error = "#fb4934"
+warning = "#fabd2f"
+
+[syntax]
+plain = "#ebdbb2"
+keyword = "#fb4934"
+type = "#fabd2f"
+function = "#b8bb26"
+string = "#b8bb26"
+number = "#d3869b"
+comment = "#928374"
+operator = "#fe8019"
+punctuation = "#ebdbb2"
+constant = "#d3869b"
+attribute = "#8ec07c"
+variable = "#ebdbb2"

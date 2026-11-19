@@ -10,4 +10,10 @@ homepage.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rhai = "1.26"
+rhai = { version = "1.26", optional = true }
+
+[features]
+default = ["rhai"]
+# The Rhai scripting engine. Frontends that only need the shared keymap (for
+# example the WebAssembly build) turn this off to avoid shipping an interpreter.
+rhai = ["dep:rhai"]

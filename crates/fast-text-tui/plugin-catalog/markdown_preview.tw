@@ -1,0 +1,107 @@
+# Markdown preview toggle for Fast Text — a TextWrite plugin.
+#
+# Turns the current Markdown buffer into a readable plain-text preview and
+# back again: headings become underlined titles, task lists use real check
+# boxes, block quotes get a gutter, and emphasis markers disappear. The
+# original source is cached per file, so the toggle is lossless even when
+# several buffers are open.
+#
+# Use Ctrl+Shift+P → "Markdown view: toggle preview", or Alt+P while a Markdown
+# buffer is focused.
+
+let mdp_sources = {}
+
+fn mdp_heading_level(row) {
+    let level = 0
+    while level < len(row) and level < 7 and row[level] is '#' {
+        level += 1
+    }
+    if level is 0 or level > 6 or level >= len(row) or row[level] is not ' ' {
+        return 0
+    }
+    return level
+}
+
+fn mdp_render_line(row) {
+    let level = mdp_heading_level(row)
+    if level > 0 {
+        let title = trim(slice(row, level + 1, len(row)))
+        if level is 1 {
+            return upper(title) + '\n' + ('=' * len(title))
+        }
+        if level is 2 {
+            return title + '\n' + ('-' * len(title))
+        }
+        return ('  ' * (level - 2)) + title
+    }
+
+    let text = trim(row)
+    if text is '---' or text is '***' or text is '___' {
+        return '─' * 48
+    }
+
+    text = replace(text, '- [ ] ', '☐ ')
+    text = replace(text, '- [x] ', '☑ ')
+    text = replace(text, '- [X] ', '☑ ')
+    text = replace(text, '**', '')
+    text = replace(text, '__', '')
+    text = replace(text, '`', '')
+    if starts_with(text, '> ') {
+        return '│ ' + slice(text, 2, len(text))
+    }
+    return text
+}
+
+fn mdp_render() {
+    let out = []
+    for row in lines(document_text) {
+        push(out, mdp_render_line(row))
+    }
+    return join(out, '\n')
+}
+
+fn mdp_replace(text) {
+    select_all()
+    delete_selection()
+    insert(text)
+    set_cursor(0)
+}
+
+fn mdp_toggle() {
+    let saved = get(mdp_sources, file_name, '')
+    if saved is not '' {
+        mdp_replace(saved)
+        mdp_sources[file_name] = ''
+        message('Markdown source restored')
+        return
+    }
+    mdp_sources[file_name] = document_text
+    mdp_replace(mdp_render())
+    message('Markdown preview — Alt+P toggles back')
+}
+
+fn mdp_outline() {
+    let out = []
+    let in_code = false
+    for row in lines(document_text) {
+        if starts_with(trim(row), '```') {
+            in_code = not in_code
+            continue
+        }
+        let level = mdp_heading_level(row)
+        if in_code or level is 0 {
+            continue
+        }
+        let title = trim(slice(row, level + 1, len(row)))
+        push(out, ('  ' * (level - 1)) + title)
+    }
+    if len(out) is 0 {
+        message('No headings found in this buffer')
+        return
+    }
+    insert(join(out, '\n'))
+}
+
+command_with_desc('Markdown view: toggle preview', 'Render Markdown as readable text and back', 'mdp_toggle')
+command_with_desc('Markdown view: insert outline', 'Insert the heading outline at the caret', 'mdp_outline')
+bind('alt+p', 'Markdown view: toggle preview')

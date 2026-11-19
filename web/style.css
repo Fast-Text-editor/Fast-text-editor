@@ -1,20 +1,35 @@
+/* Fast Text — web demo styles.
+ *
+ * Every colour comes from the shared theme compiled into WebAssembly. The
+ * `:root` values below are only the dark fallback used before `app.js` injects
+ * the theme's own custom properties (see `themeCss()` in fast-text-theme). Each
+ * selector is deliberately driven by variables so switching themes repaints
+ * the entire chrome — tabs, toolbar, editor, status bar and palette. */
+
 :root {
-  --bg: #1e2126;
+  color-scheme: dark;
+  --bg: #282c34;
   --fg: #d7dae0;
-  --gutter: #4b525e;
-  --panel: #282c34;
+  --gutter: #5c6370;
+  --panel: #21252b;
   --line: #2c313a;
   --sel: #3a4455;
   --accent: #61afef;
-  --string: #ce9178;
+  --string: #98c379;
   --keyword: #c678dd;
   --type: #e5c07b;
   --number: #d19a66;
   --comment: #6a737d;
   --operator: #56b6c2;
   --punct: #9aa5b1;
+  --constant: #d19a66;
+  --attribute: #e5c07b;
+  --variable: #e06c75;
   --error: #e06c75;
   --warning: #e5c07b;
+  --tab-active: #61afef;
+  --tab-inactive: #9aa5b1;
+  --prompt: #21252b;
 }
 
 * { box-sizing: border-box; }
@@ -32,6 +47,8 @@ body {
   flex-direction: column;
 }
 
+/* ---- Tabs ------------------------------------------------------------- */
+
 .tabs {
   display: flex;
   align-items: center;
@@ -40,21 +57,31 @@ body {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.brand { color: var(--accent); font-weight: 700; }
-.tab.active { color: var(--accent); font-weight: 600; }
+.brand { color: var(--accent); font-weight: 700; letter-spacing: 0.02em; }
+.tab.active {
+  color: var(--tab-active);
+  font-weight: 600;
+  border-bottom: 2px solid var(--tab-active);
+  padding-bottom: 2px;
+}
+.tab:not(.active) { color: var(--tab-inactive); }
 .spacer, .grow { flex: 1; }
 
+/* ---- Controls --------------------------------------------------------- */
+
 button {
-  background: #2f353f;
+  background: var(--panel);
   color: var(--fg);
-  border: 1px solid #3b414c;
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 3px 9px;
   cursor: pointer;
   font: inherit;
+  transition: border-color 120ms ease, color 120ms ease;
 }
-button:hover { border-color: var(--accent); }
+button:hover { border-color: var(--accent); color: var(--accent); }
 button:active { transform: translateY(1px); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .toolbar {
   display: flex;
@@ -62,28 +89,34 @@ button:active { transform: translateY(1px); }
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: #232830;
+  background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.toolbar input[type="text"] {
-  background: #1b1f25;
+
+.toolbar input[type="text"],
+.toolbar select,
+.palette-box input {
+  background: var(--bg);
   color: var(--fg);
-  border: 1px solid #3b414c;
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 3px 7px;
   font: inherit;
-  min-width: 120px;
 }
-.toolbar select {
-  background: #1b1f25;
-  color: var(--fg);
-  border: 1px solid #3b414c;
-  border-radius: 5px;
-  padding: 3px 6px;
-  font: inherit;
+.toolbar input[type="text"] { min-width: 120px; }
+.toolbar input[type="text"]:focus,
+.toolbar select:focus,
+.palette-box input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
+.toolbar label,
+.theme { color: var(--gutter); }
+
 .chk { color: var(--gutter); }
 .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+
+/* ---- Editor ----------------------------------------------------------- */
 
 .editor {
   position: relative;
@@ -109,9 +142,10 @@ button:active { transform: translateY(1px); }
   resize: none;
   outline: none;
   border-right: 1px solid var(--line);
-  background: #1b1f25;
+  background: var(--bg);
   caret-color: var(--accent);
 }
+#input::selection { background: var(--sel); }
 .preview { pointer-events: none; }
 
 .preview .line { min-height: 1.45em; }
@@ -125,9 +159,11 @@ button:active { transform: translateY(1px); }
 .tok-comment { color: var(--comment); font-style: italic; }
 .tok-operator { color: var(--operator); }
 .tok-punctuation { color: var(--punct); }
-.tok-constant { color: var(--number); }
-.tok-attribute { color: var(--type); }
-.tok-variable { color: var(--error); }
+.tok-constant { color: var(--constant); }
+.tok-attribute { color: var(--attribute); }
+.tok-variable { color: var(--variable); }
+
+/* ---- Status bar ------------------------------------------------------- */
 
 .status {
   display: flex;
@@ -139,6 +175,7 @@ button:active { transform: translateY(1px); }
   font-size: 12.5px;
 }
 .status #st-lang { color: var(--accent); }
+.status #st-dirty { color: var(--warning); }
 
 .message {
   margin: 0;
@@ -148,3 +185,66 @@ button:active { transform: translateY(1px); }
   background: var(--panel);
   font-size: 12.5px;
 }
+
+/* ---- Command palette --------------------------------------------------- */
+
+.palette {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 20;
+}
+.palette.hidden { display: none; }
+
+.palette-box {
+  width: min(560px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.palette-box input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 10px 14px;
+  font-size: 14px;
+  background: var(--panel);
+}
+.palette-box ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 46vh;
+  overflow: auto;
+}
+.palette-box li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.palette-box li:hover { background: var(--sel); }
+.palette-box li span { color: var(--fg); }
+.palette-box kbd {
+  color: var(--gutter);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.palette-hint {
+  margin: 0;
+  padding: 6px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--gutter);
+  font-size: 12px;
+}
+.palette-hint kbd { color: var(--accent); }

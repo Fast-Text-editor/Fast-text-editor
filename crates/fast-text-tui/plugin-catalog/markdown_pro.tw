@@ -1,6 +1,6 @@
 # Markdown structures for Fast Text — a TextWrite plugin.
 #
-# Headings, tables, fenced code and links, all from Ctrl+P. Bind your own keys
+# Headings, tables, fenced code and links, all from Ctrl+Shift+P. Bind your own keys
 # in config.toml, e.g. `alt+h = "Markdown pro: heading 2"`.
 
 fn mdp_heading(level) {

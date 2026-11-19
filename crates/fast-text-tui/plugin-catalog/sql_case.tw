@@ -1,0 +1,95 @@
+# SQL keyword casing for Fast Text — a TextWrite plugin.
+#
+# Upper-cases SQL keywords in the selection while leaving identifiers,
+# numbers and the contents of string literals exactly as they are. Handy for
+# tidying hand-written queries without running them through a formatter.
+#
+# Run Ctrl+Shift+P → "SQL: upper-case keywords" with a query selected. Use
+# "SQL: lower-case keywords" when a style guide prefers lowercase.
+
+let sq_keywords = [
+    'all', 'alter', 'and', 'as', 'asc', 'between', 'by', 'case', 'create',
+    'delete', 'desc', 'distinct', 'drop', 'else', 'end', 'from', 'group',
+    'having', 'in', 'inner', 'insert', 'into', 'is', 'join', 'left', 'like',
+    'limit', 'not', 'null', 'on', 'or', 'order', 'outer', 'right', 'select',
+    'set', 'table', 'then', 'union', 'update', 'values', 'when', 'where', 'with',
+]
+
+fn sq_case_word(word, upper_case) {
+    if word is '' {
+        return ''
+    }
+    if not contains(sq_keywords, lower(word)) {
+        return word
+    }
+    if upper_case {
+        return upper(word)
+    }
+    return lower(word)
+}
+
+fn sq_format(text, upper_case) {
+    let out = ''
+    let word = ''
+    let in_string = false
+    let in_ident = false
+
+    for c in chars(text) {
+        if in_ident {
+            if c is '"' {
+                in_ident = false
+                out = out + word + c
+                word = ''
+            } else {
+                word = word + c
+            }
+            continue
+        }
+        if in_string {
+            out = out + c
+            if c is "'" {
+                in_string = false
+            }
+            continue
+        }
+        if c is "'" {
+            in_string = true
+            out = out + c
+            continue
+        }
+        if c is '"' {
+            in_ident = true
+            word = ''
+            out = out + c
+            continue
+        }
+        if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c is '_' {
+            word = word + c
+        } else {
+            out = out + sq_case_word(word, upper_case) + c
+            word = ''
+        }
+    }
+    return out + sq_case_word(word, upper_case)
+}
+
+fn sq_apply(upper_case) {
+    if not has_selection {
+        message('Select a SQL query first')
+        return
+    }
+    delete_selection()
+    insert(sq_format(selected_text, upper_case))
+    message('SQL keywords normalised')
+}
+
+fn sq_upper() {
+    sq_apply(true)
+}
+
+fn sq_lower() {
+    sq_apply(false)
+}
+
+command_with_desc('SQL: upper-case keywords', 'Upper-case SQL keywords in the selection', 'sq_upper')
+command_with_desc('SQL: lower-case keywords', 'Lower-case SQL keywords in the selection', 'sq_lower')

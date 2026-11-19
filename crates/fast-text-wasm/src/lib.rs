@@ -7,7 +7,9 @@
 //! Build with `wasm-pack build crates/fast-text-wasm --target web`.
 
 use fast_text_core::{Document, SearchDirection};
+use fast_text_plugin::{command_for, command_id, command_title, default_bindings, KeySpec};
 use fast_text_syntax::{highlight_line, HighlightSpan, LanguageId, LineState, TokenKind};
+use fast_text_theme::{Rgb, Theme};
 use wasm_bindgen::prelude::*;
 
 /// A single Fast Text buffer, usable from JavaScript.
@@ -113,6 +115,12 @@ impl WasmEditor {
         self.doc.set_cursor(at);
     }
 
+    /// Sets the selection from an anchor to a head (both character indices).
+    #[wasm_bindgen(js_name = setSelection)]
+    pub fn set_selection(&mut self, anchor: usize, head: usize) {
+        self.doc.select(anchor, head);
+    }
+
     /// The zero-based line of the cursor.
     pub fn line(&self) -> usize {
         self.doc.cursor_position().line
@@ -190,6 +198,42 @@ impl WasmEditor {
     #[wasm_bindgen(js_name = replaceAll)]
     pub fn replace_all(&mut self, query: &str, replacement: &str, case_sensitive: bool) -> usize {
         self.doc.replace_all(query, replacement, case_sensitive)
+    }
+
+    /// Replaces a character range [start, end) with text.
+    #[wasm_bindgen(js_name = replaceRange)]
+    pub fn replace_range(&mut self, start: usize, end: usize, text: &str) {
+        self.doc.replace_range(start, end, text);
+    }
+
+    /// Deletes the current selection.
+    #[wasm_bindgen(js_name = deleteSelection)]
+    pub fn delete_selection(&mut self) {
+        self.doc.delete_selection();
+    }
+
+    /// Adds a caret above the primary cursor.
+    #[wasm_bindgen(js_name = addCaretAbove)]
+    pub fn add_caret_above(&mut self) {
+        self.doc.add_caret_above();
+    }
+
+    /// Adds a caret below the primary cursor.
+    #[wasm_bindgen(js_name = addCaretBelow)]
+    pub fn add_caret_below(&mut self) {
+        self.doc.add_caret_below();
+    }
+
+    /// Selects the next occurrence of the word under the cursor (or current selection).
+    #[wasm_bindgen(js_name = selectNextOccurrence)]
+    pub fn select_next_occurrence(&mut self, case_sensitive: bool) -> bool {
+        self.doc.select_next_occurrence(case_sensitive)
+    }
+
+    /// The number of active selections (1 + extra cursors).
+    #[wasm_bindgen(js_name = selectionCount)]
+    pub fn selection_count(&self) -> usize {
+        1 + self.doc.extra_selections().len()
     }
 
     // --- Language & highlighting -------------------------------------------
@@ -340,6 +384,167 @@ fn push_escaped(out: &mut String, text: &str) {
     }
 }
 
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn rgb_hex(color: Rgb) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
+}
+
+/// Returns the shared keybindings as a JSON array.
+///
+/// Each entry is `{"key":"Ctrl+S","command":"save","title":"Save"}` so the
+/// web frontend can draw tooltips and menus without duplicating the bindings.
+#[wasm_bindgen(js_name = keybindings)]
+pub fn keybindings() -> String {
+    let mut entries: Vec<String> = Vec::new();
+    for (spec, command) in default_bindings() {
+        entries.push(format!(
+            "{{\"key\":{},\"command\":{},\"title\":{}}}",
+            json_string(&spec.display()),
+            json_string(command_id(command)),
+            json_string(command_title(command)),
+        ));
+    }
+    format!("[{}]", entries.join(","))
+}
+
+/// Resolves a key string (e.g. `"Ctrl+P"`) to a command id.
+#[wasm_bindgen(js_name = commandForKey)]
+pub fn command_for_key(key: &str) -> Option<String> {
+    let spec = KeySpec::parse(key)?;
+    let command = command_for(spec)?;
+    Some(command_id(command).to_string())
+}
+
+/// Resolves a key string to a human-readable command title.
+#[wasm_bindgen(js_name = commandTitleForKey)]
+pub fn command_title_for_key(key: &str) -> Option<String> {
+    let spec = KeySpec::parse(key)?;
+    let command = command_for(spec)?;
+    Some(command_title(command).to_string())
+}
+
+/// All built-in theme names as a JSON array.
+#[wasm_bindgen(js_name = themeNames)]
+pub fn theme_names() -> String {
+    let names: Vec<String> = Theme::names().iter().map(|n| json_string(n)).collect();
+    format!("[{}]", names.join(","))
+}
+
+/// The CSS custom properties for a theme.
+///
+/// The web frontend can apply this to `:root` to make the entire UI (editor,
+/// gutters, tabs, status bar) follow the same shared palette as the terminal
+/// and desktop builds.
+#[wasm_bindgen(js_name = themeCss)]
+pub fn theme_css(name: &str) -> String {
+    let Some(theme) = Theme::builtin(name) else {
+        return String::new();
+    };
+    let ui = theme.ui;
+    let s = theme.syntax;
+    let scheme = if theme.dark { "dark" } else { "light" };
+    format!(
+        ":root {{ color-scheme: {scheme}; --bg: {bg}; --fg: {fg}; --gutter: {gutter}; --panel: {panel}; --line: {line}; --sel: {sel}; --accent: {accent}; --string: {string}; --keyword: {keyword}; --type: {type}; --number: {number}; --comment: {comment}; --operator: {operator}; --punct: {punct}; --constant: {constant}; --attribute: {attribute}; --variable: {variable}; --error: {error}; --warning: {warning}; --tab-active: {tab_active}; --tab-inactive: {tab_inactive}; --prompt: {prompt}; }}",
+        scheme = scheme,
+        bg = rgb_hex(ui.background),
+        fg = rgb_hex(ui.foreground),
+        gutter = rgb_hex(ui.gutter),
+        panel = rgb_hex(ui.status_bg),
+        line = rgb_hex(ui.cursor_line),
+        sel = rgb_hex(ui.selection),
+        accent = rgb_hex(ui.status_accent),
+        string = rgb_hex(s.string),
+        keyword = rgb_hex(s.keyword),
+        type = rgb_hex(s.type_),
+        number = rgb_hex(s.number),
+        comment = rgb_hex(s.comment),
+        operator = rgb_hex(s.operator),
+        punct = rgb_hex(s.punctuation),
+        constant = rgb_hex(s.constant),
+        attribute = rgb_hex(s.attribute),
+        variable = rgb_hex(s.variable),
+        error = rgb_hex(ui.error),
+        warning = rgb_hex(ui.warning),
+        tab_active = rgb_hex(ui.tab_active),
+        tab_inactive = rgb_hex(ui.tab_inactive),
+        prompt = rgb_hex(ui.prompt_bg),
+    )
+}
+
+/// The full theme as JSON for frontends that want structured access.
+#[wasm_bindgen(js_name = themeColors)]
+pub fn theme_colors(name: &str) -> String {
+    let Some(theme) = Theme::builtin(name) else {
+        return "{}".to_string();
+    };
+    let ui = theme.ui;
+    let s = theme.syntax;
+    let ui_entries = [
+        ("background", ui.background),
+        ("foreground", ui.foreground),
+        ("gutter", ui.gutter),
+        ("gutterActive", ui.gutter_active),
+        ("cursorLine", ui.cursor_line),
+        ("selection", ui.selection),
+        ("statusBg", ui.status_bg),
+        ("statusFg", ui.status_fg),
+        ("statusAccent", ui.status_accent),
+        ("promptBg", ui.prompt_bg),
+        ("tabActive", ui.tab_active),
+        ("tabInactive", ui.tab_inactive),
+        ("error", ui.error),
+        ("warning", ui.warning),
+    ];
+    let syntax_entries = [
+        ("plain", s.plain),
+        ("keyword", s.keyword),
+        ("type", s.type_),
+        ("function", s.function),
+        ("string", s.string),
+        ("number", s.number),
+        ("comment", s.comment),
+        ("operator", s.operator),
+        ("punctuation", s.punctuation),
+        ("constant", s.constant),
+        ("attribute", s.attribute),
+        ("variable", s.variable),
+    ];
+    let ui_json = json_colors(&ui_entries);
+    let syntax_json = json_colors(&syntax_entries);
+    format!(
+        "{{\"name\":{},\"dark\":{},\"ui\":{{{}}},\"syntax\":{{{}}}}}",
+        json_string(&theme.name),
+        if theme.dark { "true" } else { "false" },
+        ui_json,
+        syntax_json,
+    )
+}
+
+fn json_colors(entries: &[(&str, Rgb)]) -> String {
+    entries
+        .iter()
+        .map(|(key, color)| format!("{}:{}", json_string(key), json_string(&rgb_hex(*color))))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +635,58 @@ mod tests {
         assert!(html.contains("tok-comment"), "comment on line 2 missing");
         assert!(html.contains("tok-string"), "string on line 3 missing");
         assert_eq!(ed.language_name(), "Python");
+    }
+
+    #[test]
+    fn exports_the_shared_keymap() {
+        let json = keybindings();
+        assert!(json.contains("\"command\":\"file_finder\""), "{json}");
+        assert!(json.contains("\"key\":\"Ctrl+P\""), "{json}");
+        assert!(json.contains("\"title\":\"Save\""), "{json}");
+        assert_eq!(command_for_key("Ctrl+P").as_deref(), Some("file_finder"));
+        assert_eq!(
+            command_title_for_key("Ctrl+Shift+P").as_deref(),
+            Some("Command Palette…")
+        );
+        assert!(command_for_key("Ctrl+Nonsense").is_none());
+    }
+
+    #[test]
+    fn exports_the_shared_themes_as_css_and_json() {
+        let names = theme_names();
+        assert!(names.contains("\"monokai\""));
+        assert!(names.contains("\"tokyo-night\""));
+        let css = theme_css("monokai");
+        assert!(css.starts_with(":root {"), "{css}");
+        assert!(css.contains("--keyword: #"), "{css}");
+        let json = theme_colors("monokai");
+        assert!(json.contains("\"syntax\":{"), "{json}");
+        assert!(json.contains("\"keyword\":\"#"), "{json}");
+        assert_eq!(theme_css("does-not-exist"), "");
+        assert_eq!(theme_colors("does-not-exist"), "{}");
+    }
+
+    #[test]
+    fn replace_range_is_undoable() {
+        let mut ed = WasmEditor::new("hello world", None);
+        ed.replace_range(6, 11, "there");
+        assert_eq!(ed.text(), "hello there");
+        ed.undo();
+        assert_eq!(ed.text(), "hello world");
+    }
+
+    #[test]
+    fn multi_cursor_helpers_are_exposed() {
+        let mut ed = WasmEditor::new("a\nb\nc", None);
+        ed.add_caret_below();
+        assert_eq!(ed.selection_count(), 2);
+
+        let mut ed = WasmEditor::new("foo foo\nbar", None);
+        // The first call selects the word; the second adds the next occurrence.
+        assert!(ed.select_next_occurrence(true));
+        assert_eq!(ed.selection_count(), 1);
+        assert!(ed.select_next_occurrence(true));
+        assert_eq!(ed.selection_count(), 2);
     }
 
     #[test]

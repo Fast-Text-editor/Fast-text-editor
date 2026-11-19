@@ -1,0 +1,56 @@
+# Markdown table of contents for Fast Text — a TextWrite plugin.
+#
+# Inserts a linked outline for the headings in the current buffer at the
+# caret. Fenced code blocks are skipped, GitHub-style anchors are generated
+# from heading text, and indentation reflects heading depth. The generated
+# list is plain Markdown, so it survives a save and round-trips through the
+# editor like any other text.
+
+fn ol_heading_level(row) {
+    let level = 0
+    while level < len(row) and level < 7 and row[level] is '#' {
+        level += 1
+    }
+    if level is 0 or level > 6 or level >= len(row) or row[level] is not ' ' {
+        return 0
+    }
+    return level
+}
+
+fn ol_slug(title) {
+    let out = []
+    for c in chars(lower(trim(title))) {
+        if (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c is '-' or c is '_' {
+            push(out, c)
+        } else if c is ' ' {
+            push(out, '-')
+        }
+    }
+    return join(out, '')
+}
+
+fn ol_generate() {
+    let out = []
+    let in_code = false
+    for row in lines(document_text) {
+        if starts_with(trim(row), '```') {
+            in_code = not in_code
+            continue
+        }
+        let level = ol_heading_level(row)
+        if in_code or level is 0 {
+            continue
+        }
+        let title = trim(slice(row, level + 1, len(row)))
+        let indent = '  ' * (level - 1)
+        let anchor = ol_slug(title)
+        push(out, "{indent}- [{title}](#{anchor})")
+    }
+    if len(out) is 0 {
+        message('No Markdown headings found')
+        return
+    }
+    insert(join(out, '\n'))
+}
+
+command_with_desc('Outline: insert Markdown TOC', 'Insert a linked table of contents at the caret', 'ol_generate')

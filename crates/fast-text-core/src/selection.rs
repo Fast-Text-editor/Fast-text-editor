@@ -2,7 +2,7 @@
 ///
 /// `head` is the moving end (where the caret is), `anchor` is the fixed end.
 /// A collapsed selection (`anchor == head`) is a plain caret.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Selection {
     pub anchor: usize,
     pub head: usize,

@@ -10,6 +10,15 @@ A fast, modern text editor written in Rust. Fast Text is built as a **Cargo
 workspace** with a single powerful engine and thin frontends layered on top, so
 the editor behaves identically everywhere.
 
+## Showcase
+
+| Editing and the command palette | Nested split panes |
+| --- | --- |
+| ![Typing Rust code and running a TextWrite command](assets/demo-edit.gif) | ![Two panes with focus switching](assets/demo-splits.gif) |
+
+`ft -O file1 file2` opens files as nested panes instead of tabs. Everything
+else — themes, keybindings, scripts — is shared with the desktop and web
+frontends.
 
 ## Quick start
 
@@ -26,17 +35,23 @@ That installs the editor (`fast-text`, `ft`) and the TextWrite language
 ```
 fast-text/
 ├── crates/
-│   ├── fast-text-core/    # the engine: rope buffer, edits, undo/redo, find
+│   ├── fast-text-core/    # the engine: rope buffer, edits, undo/redo, find, fuzzy match
 │   ├── fast-text-syntax/  # stateful, dependency-free syntax highlighting
-│   ├── fast-text-plugin/  # Rhai-scripted plugins: commands + keybindings
+│   ├── fast-text-theme/   # one TOML theme schema shared by the TUI, GUI and web
+│   ├── fast-text-plugin/  # Rhai plugins, TextWrite bridge types, shared keymap
 │   ├── fast-text-lsp/     # a minimal Language Server Protocol client
 │   ├── fast-text-wasm/    # WebAssembly bindings for the engine
 │   ├── fast-text-gui/     # native desktop frontend (egui/eframe)
 │   ├── fast-text-tui/     # terminal frontend (ratatui) — the `fast-text` / `ft` binaries
+│   │   ├── plugin-catalog/ # 26 first-party TextWrite scripts, embedded via include_str!
+│   │   └── registry/      # offline plugin index (`index.json`)
 │   ├── fast-text-textwrite/ # TextWrite editor scripts: the `ScriptHost` bridge
 │   └── textwrite/         # TextWrite: the Fast Text scripting language — `textwrite` / `tw`
+├── docs/                  # scripting and integration guides
+├── assets/                # README showcase GIFs
 ├── tools/gen_langs.py     # generates the language registry from Helix
 ├── plugins/               # example plugins, Rhai and TextWrite (loaded at startup)
+├── automations/           # one-shot TextWrite demos for Alt+R
 ├── web/                   # browser frontend (see web/README.md)
 ├── install.sh             # universal installer: prebuilt release or source build
 └── .github/workflows/     # CI (fmt, clippy, tests) and tagged release binaries
@@ -48,16 +63,19 @@ Every frontend is a *thin shell* over `fast-text-core`. The engine knows nothing
 about terminals, windows, or browsers; it just tracks text, cursors, and
 history. That means:
 
-- the same editing semantics (undo grouping, word motion, goal columns, search)
-  work in every frontend;
+- the same editing semantics (undo grouping, persistent undo, word motion, goal
+  columns, fuzzy matching, multiple cursors, search) work in every frontend;
+- one shared keymap and one shared TOML theme schema keep `Ctrl+S`, `Ctrl+Shift+P`,
+  `Alt+T`, colors and messages identical in the terminal, desktop and browser;
 - the core is trivially testable without a UI;
-- new frontends (native GUI, web/WASM) reuse 100% of the editing logic.
+- new frontends (native GUI, web/WASM) reuse all of the editing logic.
 
 ## Building and running
 
 ```sh
 cargo run -p fast-text-tui              # terminal editor: welcome buffer
 cargo run -p fast-text-tui -- file.rs   # terminal editor: one or more files
+cargo run -p fast-text-tui -- -O a.rs b.rs  # open files as split panes
 cargo run -p fast-text-tui --bin ft     # same editor, short alias
 cargo run -p fast-text-gui -- file.rs   # native desktop window (needs a display)
 cargo run -p textwrite -- file.tw       # run a TextWrite script
@@ -134,7 +152,7 @@ day (in the background, so it never blocks the editor) and, when something
 newer is out, opens a small window naming the version with **Yes, update** and
 **Not now** buttons. `Yes` downloads the release, unpacks it, swaps the
 executables in place and then offers to restart; the editor itself never
-re-execs without asking. `Alt+U` (or *Check for updates* in `Ctrl+P`)
+re-execs without asking. `Alt+U` (or *Check for updates* in `Ctrl+Shift+P`)
 checks on demand, and the version you are running is shown in the status bar.
 
 ```toml
@@ -170,7 +188,8 @@ desktop app has the same dialog under **Help → Check for updates**.
 | `Ctrl+W` | Close buffer | `F3` / `F4` | Find next / previous |
 | `Ctrl+Q` | Quit | `Ctrl+H` | Replace all |
 | `Ctrl+G` | Go to line | `Ctrl+T` | Toggle theme |
-| `Ctrl+L` | Language picker | `Ctrl+P` | Command palette |
+| `Ctrl+L` | Language picker | `Ctrl+P` | Fuzzy file finder |
+| `Ctrl+Shift+P` | Command palette | `Alt+:` | `:` command bar |
 | `Ctrl+Space` | Complete | `F5` | Hover info |
 | `F12` | Go to definition | `Alt+H` | Help |
 | `Esc` | Collapse selection | `Alt+M` | Plugin manager |
@@ -183,15 +202,23 @@ desktop app has the same dialog under **Help → Check for updates**.
 | `Ctrl+Shift+K` | Delete line | `Alt+↑` / `Alt+↓` | Move line up / down |
 | `Alt+Shift+↑` / `Alt+Shift+↓` | Add cursor above / below | `F6` / `F7` | Record / replay macro |
 | `Alt+U` | Check for updates | `Alt+C` | Terminal panel |
+| `Alt+V` | Toggle Vim layer | `Ctrl+←/↑` `Ctrl+→/↓` | Previous / next split pane |
 
 A few chords are terminal-dependent (`Ctrl+Shift+<letter>`, `Ctrl+.`). Every
 action also has a palette entry and a `[keys]` id, so you can rebind it — for
-example `"alt+shift+f" = "find_in_files"`.
+example `"alt+shift+f" = "find_in_files"`. `Cmd` on macOS is treated as `Ctrl`,
+so the familiar shortcuts work without a second keymap.
 
-`Shift` + arrows extends the selection; `Ctrl` + left/right moves by word.
+`Shift` + arrows extends the selection; `Alt` + left/right moves by word. With
+more than one pane open, `Ctrl` + arrows moves focus between panes instead.
 
 `Ctrl+L` opens a fuzzy-filterable picker listing **every supported language**
 (300+). Type to narrow, `↑`/`↓` to move, `Enter` to apply.
+
+`Ctrl+P` opens a **fuzzy file finder** over the explorer's folder; type a few
+characters, then `Enter` to open the highlighted match. `Ctrl+Shift+P` opens the
+**command palette**, which includes every built-in action plus commands
+registered by scripts. Both use the same fuzzy matcher in `fast-text-core`.
 
 `Ctrl+B` shows a Visual-Studio-style **folder explorer** along the left edge,
 rooted at the folder you launched from (or `Ctrl+Shift+O` to pick another).
@@ -201,6 +228,10 @@ highlighted row (an inline prompt at the panel's foot asks for a plain name —
 no slashes or dot-names — and opens the file you just made), `r` reloads, and
 `.` toggles dotfiles. With the mouse you can click a file to open it, click a
 tab to switch, and click a tab's `✕` to close it.
+
+Mouse editing works in the text area too: click to place the caret, drag or
+`Shift`-click to select, and scroll with the wheel. The view can be scrolled
+independently of the caret when you want to look ahead.
 
 `Alt+C` opens a **terminal panel** at the bottom of the window. It keeps a
 working directory with a `┌──(user㉿host)-[~/dir]` / `└─$` prompt, so `cd`
@@ -222,6 +253,16 @@ then edits every caret at once as a single undo step. `F6` starts recording a
 **macro**, `F7` replays the last one, and *Save macro…* names one so you can bind
 it (`"alt+k" = "macro_tidy imports"`).
 
+`ft -O file1 file2` (or `--split`) opens files as **nested split panes** instead
+of tabs. Use *Split pane right/down*, *Focus next/previous pane* and *Close pane*
+from the palette, or `Ctrl` + arrows to change focus. Panes can nest arbitrarily.
+
+`Alt+V` toggles an optional **Vim layer**: `i` enters insert mode, `Esc` returns
+to Normal, `d`/`y`/`c` work as operators with motions, and `v`/`V` select.
+`Alt+:`, or a bare `:` in Normal mode, opens the command bar: `:w`, `:q`, `:q!`,
+`:wq`, `:e`, `:theme`, `:set vim`, `:set diagnostics`, `:help` and `:ls` all
+work, and anything else is evaluated as TextWrite.
+
 With a language server running (see [Language servers](#language-servers)),
 `Ctrl+Shift+I` formats the document, `Ctrl+.` offers code actions, `Alt+N`
 renames the symbol under the cursor, and `Alt+O` lists document symbols.
@@ -237,9 +278,11 @@ bad lines are reported in the status bar rather than stopping the editor.
 ```toml
 [editor]
 cursor_style = "bar"      # bar | block | underline
-theme        = "dark"     # dark | light
+theme        = "one-dark" # any of the ten built-in or user themes
 sidebar      = false      # start with the folder explorer visible
 lsp          = true       # talk to language servers (as FAST_TEXT_LSP)
+inline_diagnostics = true # show LSP messages under the affected line
+vim          = false      # start with the optional Vim layer on
 check_updates = true      # look for a newer release at startup (as Alt+U)
 
 [sidebar]
@@ -251,14 +294,14 @@ hidden = false            # list dot-files
 "ctrl+k" = "cursor_block"
 ```
 
-Pick *Reload config* from the `Ctrl+P` palette to apply changes without
+Pick *Reload config* from the `Ctrl+Shift+P` palette to apply changes without
 restarting, or *Open config file*, which opens the file and writes a fully
 commented template the first time it is needed.
 
 ### Custom keybindings
 
 `[keys]` maps a key spelling to a command. The command is either a built-in id
-(listed below) or any command title from the `Ctrl+P` palette, including plugin
+(listed below) or any command title from the `Ctrl+Shift+P` palette, including plugin
 and TextWrite commands:
 
 ```
@@ -270,9 +313,17 @@ manage_plugins, install_plugin, cursor_bar, cursor_block, cursor_underline,
 help, next_tab, prev_tab, reload_config, open_config,
 find_in_files, document_symbols, rename_symbol, format_document,
 code_actions, toggle_comment, duplicate_line, delete_line, move_line_up,
-move_line_down, select_next_occurrence, record_macro, replay_macro,
-save_macro, check_updates
+move_line_down, select_next_occurrence, cursor_above, cursor_below,
+record_macro, replay_macro, save_macro, check_updates,
+file_finder, toggle_console, repl, split_pane_right, split_pane_down,
+close_pane, focus_next_pane, focus_previous_pane, restore_default_status_line,
+command_line, vim, toggle_inline_diagnostics, install_language_server
 ```
+
+The first block is the shared keymap (`fast-text-plugin::keymap`), used by the
+TUI, GUI and WASM frontends; the second block adds TUI-specific panes, hooks and
+commands. macOS `Cmd`/`Super` is translated to `Ctrl`, so one binding covers
+both.
 
 A named macro can also be bound with the id `macro_<name>`.
 
@@ -287,7 +338,22 @@ bare letter with no modifier is refused, because it would stop you typing it.
 | `-h`, `--help` | Print usage |
 | `-V`, `--version` | Print the version |
 | `-c`, `--config PATH` | Read settings from `PATH` |
+| `-O`, `--split` | Open the listed files as nested split panes |
 | `--` | Treat every later argument as a file name |
+
+Plugin registry commands are also available on the CLI:
+
+```sh
+ft plugin list                 # installed plugins and registry size
+ft plugin search markdown      # search by name, title, tag or description
+ft plugin install smart-brackets   # install a bundled plugin (no network)
+ft install status-formats      # shorthand for `ft plugin install`
+ft plugin remove wrap          # delete an installed plugin
+ft plugin help
+```
+
+Bundled entries install from the embedded catalog; only non-bundled entries
+fetch their source. Pass `--force` to overwrite an installed plugin.
 
 `FAST_TEXT_LSP=0` turns language servers off even when `config.toml` asks for
 them.
@@ -322,8 +388,9 @@ are C++.
 When a supported language server is on `PATH`, Fast Text starts it
 automatically and shows:
 
-- **diagnostics** — markers in the gutter (`E`/`W`/`i`) plus a summary and the
-  current line's message in the status bar;
+- **diagnostics** — markers in the gutter (`E`/`W`/`i`), a summary in the status
+  bar, and an inline `↳ severity: message` line under each affected line
+  (toggle with `:set diagnostics` / `:set nodiagnostics`);
 - **completion** (`Ctrl+Space`) in a popup — `↑`/`↓` to choose, `Enter`/`Tab`
   to accept, `Esc` to dismiss;
 - **hover** (`F5`) and **go to definition** (`F12`).
@@ -335,14 +402,18 @@ supported set is large: `rust-analyzer`, `pylsp`/`jedi`, `gopls`, `clangd`,
 `taplo`, `marksman`, `vscode-json-language-server`, and many more. For each
 language Fast Text tries its preferred servers in order and uses the first one
 installed. Servers start on a background thread, so the editor never blocks —
-and with none installed it behaves exactly as before. Disable the integration
-with `FAST_TEXT_LSP=0`.
+and with none installed it behaves exactly as before. For Rust, JavaScript,
+TypeScript, Python, Shell, Go and Ruby the editor can suggest a well-known
+install command in a consent dialog; nothing runs until you accept, and a
+decline is remembered for the session. *Retry language server* in the palette
+re-probes after you install one yourself. Disable the integration with
+`FAST_TEXT_LSP=0`.
 
 ## Plugins and editor scripts
 
-Drop `.rhai` **plugins** or `.tw` **TextWrite scripts** into `plugins/` (next to
-the binary) or `~/.config/fast-text/plugins/`. Each script registers commands and
-keybindings; `Ctrl+P` lists them all. Scripts describe edits as *actions*
+Drop `.rhai` **plugins** or `.tw` **TextWrite scripts** into `plugins/` in your
+working directory or `~/.config/fast-text/plugins/`. Each script registers commands and
+keybindings; `Ctrl+Shift+P` lists them all. Scripts describe edits as *actions*
 (`insert`, `delete_selection`, `move_caret`, `set_language`, `set_theme`, …) and
 read editor state from globals (`selected_text`, `document_text`, `has_selection`,
 `cursor`, `line`, `file_name`, `language`, `theme`, …):
@@ -368,14 +439,18 @@ bind("ctrl+shift+q", "Wrap in quotes")
 ```
 
 Both languages run against the same editor API (the `EditorAction` queue), so a
-script can be written in either. The repository ships several examples under
-`plugins/`: `example.rhai`, `example.tw`, `cursor.tw`, plus `text_tools.tw`
-(sort/uppercase/number lines), `markdown.tw`, and `notes.tw`. Press **`Ctrl+E`**
-to evaluate a TextWrite snippet against the current buffer and see the result in
-the status bar.
+script can be written in either. The repository ships examples under `plugins/`:
+`example.rhai`, `example.tw`, `cursor.tw`, `text_tools.tw`, `markdown.tw` and
+`notes.tw`. Press **`Ctrl+E`** to evaluate a TextWrite snippet against the
+current buffer and see the result in the status bar.
+
+For the full bridge — context globals, `selected_text`, selection replacement,
+every host function, errors, hooks and status-line formatting — see the dedicated
+[TextWrite editor scripting guide](docs/scripting.md).
+
 ### The plugin manager
 
-Press **`Alt+M`** (or **`Ctrl+M`**, or pick *Manage plugins* from the `Ctrl+P`
+Press **`Alt+M`** (or **`Ctrl+M`**, or pick *Manage plugins* from the `Ctrl+Shift+P`
 palette) to open a Visual-Studio-style **plugin manager**. It has two tabs:
 
 * **Installed** lists every plugin found on disk with its runtime, commands,
@@ -408,7 +483,13 @@ Toggling a plugin takes effect immediately and is remembered in
 also reachable with the mouse: click a row to select it, then click it again to
 toggle (or install) it.
 
-The catalog ships eighteen plugins, all written in TextWrite and readable under
+At startup Fast Text loads TextWrite and Rhai scripts from
+`~/.config/fast-text/plugins/` and `plugins/` relative to the working directory
+(the user directory wins on name clashes). Use the manager to disable one
+without deleting it, or the [registry CLI](#command-line) to install one by
+name.
+
+The catalog ships **26 plugins**, all written in TextWrite and readable under
 `crates/fast-text-tui/plugin-catalog/`: **Theme pack**, **Case and lines**,
 **Statistics**, **Markdown pro**, **Whitespace**, **Snippets**, **Comments**
 (toggle line comments for the right language), **CSV tools** (sort, swap and
@@ -418,18 +499,45 @@ cases** (camelCase ⇄ snake_case ⇄ kebab-case ⇄ paths), **Word frequency**,
 **Box drawing** (single, rounded, double and heavy boxes), **Align** (line up on
 `=`, `:`, `=>` or `|`), **Ciphers** (ROT13 and Atbash), **TODO report** (group
 every marker with line numbers), **Wrap** (reflow to 72/80 columns or unwrap),
-and **Path tools** (separators, base names, directories, quoting).
+**Path tools** (separators, base names, directories, quoting), **Smart
+brackets** (auto-close and wrap with `()`, `[]`, `{}` and quotes), **Markdown
+preview** (readable text view and heading outline), **Status formats** (four
+custom status lines with open/save hooks), **Linked TOC**, **Brace formatter**
+(indented or one-line JSON/CSS), **SQL casing**, **Markdown tables** and **Log
+summary**. The full list is in the
+[catalog README](crates/fast-text-tui/plugin-catalog/README.md).
 
 ### Themes
 
 Ten themes ship with the editor — `dark`, `light`, `one-dark`, `monokai`,
 `dracula`, `nord`, `gruvbox`, `tokyo-night`, `solarized-dark`, and
-`solarized-light`. Pick one from the `Ctrl+P` palette (*Theme: Monokai*, …),
+`solarized-light`. Pick one from the `Ctrl+Shift+P` palette (*Theme: Monokai*, …),
 with `Ctrl+T` to flip between dark and light, or set it in `config.toml`:
 
 ```toml
 [editor]
 theme = "monokai"
+```
+
+All ten palettes are TOML files in `crates/fast-text-theme/themes/` parsed by
+one hand-written schema (`fast-text-theme`) and shared by the TUI, GUI and web
+frontend. Drop your own file into `~/.config/fast-text/themes/` to extend the
+list; colors accept `#RRGGBB`, `0xRRGGBB` or `#RGB`, missing keys fall back to
+`dark`, and unknown keys are warnings rather than errors:
+
+```toml
+# ~/.config/fast-text/themes/midnight.toml
+name = "midnight"
+dark = true
+
+[ui]
+background = "#10141c"
+foreground = "#d7dae0"
+status_accent = "#82aaff"
+
+[syntax]
+keyword = "#c792ea"
+string = "#c3e88d"
 ```
 
 A plugin can also define its own palette. `define_theme(name, map)` registers a
@@ -591,7 +699,9 @@ of small complete programs.
 Inside the editor, TextWrite is wired up through the `fast-text-textwrite` crate,
 which implements the language's [`Host`] hook and turns script calls into the
 same `EditorAction`s Rhai plugins use. That means `.tw` files in `plugins/`
-appear in `Ctrl+P` and can bind keys, and `Ctrl+E` evaluates a snippet in place.
+appear in `Ctrl+Shift+P` and can bind keys, and `Ctrl+E` evaluates a snippet in
+place. The [TextWrite editor scripting guide](docs/scripting.md) documents that
+bridge in detail.
 
 [`Host`]: crates/textwrite/src/host.rs
 
@@ -601,13 +711,16 @@ All four frontends share the same engine:
 
 | Frontend | Crate | What it is |
 | --- | --- | --- |
-| **Terminal** | `fast-text-tui` | ratatui-based TUI — the `fast-text` / `ft` binaries. Full-featured: tabs, plugins, LSP, themes. |
-| **Desktop** | `fast-text-gui` | egui/eframe window. Same highlighter, painted into a multiline text widget. |
-| **Web** | `fast-text-wasm` + `web/` | The engine compiled to WebAssembly; a small HTML/JS shell drives it. |
+| **Terminal** | `fast-text-tui` | ratatui-based TUI — the `fast-text` / `ft` binaries. Tabs, nested split panes, a : command bar, optional Vim layer, mouse editing, plugins, LSP, themes. |
+| **Desktop** | `fast-text-gui` | egui/eframe window. Same engine, highlighter, keymap and theme schema; share `Document::replace_range` with plugin edits. |
+| **Web** | `fast-text-wasm` + `web/` | The engine compiled to WebAssembly; a small HTML/JS shell drives it, with `themeCss()` / `themeColors()` and the same key commands. |
 | **Library** | `fast-text-core` | The engine itself, embeddable in any Rust program. |
 
-`fast-text-core` knows nothing about terminals, windows, or browsers; it just
-tracks text, selections, and history.
+All three user-facing frontends resolve keys through one `EditorCommand` table
+and read the same TOML theme schema, so `Ctrl+S`, `Ctrl+P`, `Ctrl+Shift+P`,
+`Alt+T`, colors and messages behave the same in a terminal, a window or a
+browser. `fast-text-core` knows nothing about terminals, windows, or browsers;
+it just tracks text, selections, history and persistent undo sessions.
 
 ## Engine design
 
@@ -615,9 +728,14 @@ tracks text, selections, and history.
   dirty tracking, and a `revision` counter so frontends can invalidate caches
   cheaply.
 - **Document** (`document.rs`) — the high-level API: cursor movement with a
-  sticky *goal column*, selection-aware edits, find/replace, undo/redo.
+  sticky *goal column*, selection-aware edits, find/replace, undo/redo,
+  range replacement for plugin edits and multiple cursors.
 - **History** (`history.rs`) — reversible `Edit`s grouped into transactions.
-  Bursts of typing and streams of backspaces coalesce into single undo steps.
+  Bursts of typing and streams of backspaces coalesce into single undo steps;
+  `undo.rs` snapshots up to 200 transactions per file into the cache directory
+  so undo survives a restart (written atomically as `.json.tmp` → `.json`).
+- **Fuzzy matching** (`fuzzy.rs`) — the subsequence scorer behind `Ctrl+P` and
+  the language picker. `FileFinder` is feature-gated away on WASM.
 - **Syntax** (`fast-text-syntax`) — a stateful lexer that carries block-comment
   and multi-line-string state between lines, so it colorizes scrollable files
   without re-parsing from the top every frame. Language definitions are a data

@@ -1,0 +1,83 @@
+# Smart bracket and quote pairing for Fast Text — a TextWrite plugin.
+#
+# Installing this plugin binds the five opening pairs to commands that insert
+# both halves and leave the caret between them. Typing a closing character
+# steps over one that is already there instead of doubling it, and selecting
+# text before typing a bracket wraps the selection. Disable the plugin in the
+# manager to get plain typing back.
+
+let br_pairs = {
+    '(': ')',
+    '[': ']',
+    '{': '}',
+    '"': '"',
+    "'": "'",
+}
+
+fn br_pair_for(open) {
+    return get(br_pairs, open, '')
+}
+
+fn br_replace(text) {
+    delete_selection()
+    insert(text)
+}
+
+fn br_open(open) {
+    let close = br_pair_for(open)
+    if close is '' {
+        message('No closing pair is defined for ' + open)
+        return
+    }
+    if has_selection {
+        br_replace(open + selected_text + close)
+        set_cursor(selection_start + len(open))
+        return
+    }
+    # Quotes use the same key to open and close: step over an existing one.
+    if cursor < len(document_text) and document_text[cursor] is close {
+        move_caret('right')
+        return
+    }
+    insert(open + close)
+    set_cursor(cursor + len(open))
+}
+
+fn br_close(close) {
+    if cursor < len(document_text) and document_text[cursor] is close {
+        move_caret('right')
+    } else {
+        insert(close)
+    }
+}
+
+fn br_paren_open()   { br_open('(') }
+fn br_bracket_open() { br_open('[') }
+fn br_brace_open()   { br_open('{') }
+fn br_quote_open()   { br_open('"') }
+fn br_apostrophe()   { br_open("'") }
+
+fn br_paren_close()  { br_close(')') }
+fn br_bracket_close() { br_close(']') }
+fn br_brace_close()   { br_close('}') }
+
+command_with_desc('Brackets: pair ()', 'Insert () and place the caret inside', 'br_paren_open')
+command_with_desc('Brackets: pair []', 'Insert [] and place the caret inside', 'br_bracket_open')
+command_with_desc('Brackets: pair {}', 'Insert {} and place the caret inside', 'br_brace_open')
+command_with_desc('Brackets: pair quotes', 'Insert "" and place the caret inside', 'br_quote_open')
+command_with_desc('Brackets: pair apostrophes', "Insert '' and place the caret inside", 'br_apostrophe')
+command_with_desc('Brackets: wrap in ()', 'Wrap the selection in parentheses', 'br_paren_open')
+command_with_desc('Brackets: wrap in []', 'Wrap the selection in brackets', 'br_bracket_open')
+command_with_desc('Brackets: wrap in {}', 'Wrap the selection in braces', 'br_brace_open')
+command_with_desc('Brackets: close )', 'Step over a closing parenthesis', 'br_paren_close')
+command_with_desc('Brackets: close ]', 'Step over a closing bracket', 'br_bracket_close')
+command_with_desc('Brackets: close }', 'Step over a closing brace', 'br_brace_close')
+
+bind('(', 'Brackets: pair ()')
+bind('[', 'Brackets: pair []')
+bind('{', 'Brackets: pair {}')
+bind('"', 'Brackets: pair quotes')
+bind("'", 'Brackets: pair apostrophes')
+bind(')', 'Brackets: close )')
+bind(']', 'Brackets: close ]')
+bind('}', 'Brackets: close }')

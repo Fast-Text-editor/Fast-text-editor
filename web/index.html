@@ -11,6 +11,11 @@
     <span class="brand">Fast&nbsp;Text</span>
     <span class="tab active" id="tab-name">untitled</span>
     <span class="spacer"></span>
+    <label class="theme">
+      Theme
+      <select id="theme" title="Shared theme (Alt+T cycles)"></select>
+    </label>
+    <button id="btn-palette" title="Command palette (Ctrl+Shift+P)">Commands</button>
     <button id="btn-sample" title="Load sample code">Sample</button>
   </header>
 
@@ -47,6 +52,15 @@
   </footer>
 
   <p id="message" class="message" role="status"></p>
+
+  <div id="palette" class="palette hidden" role="dialog" aria-label="Command palette">
+    <div class="palette-box">
+      <input id="palette-input" type="text" placeholder="Type a command…" spellcheck="false"
+        autocomplete="off" />
+      <ul id="palette-list"></ul>
+      <p class="palette-hint"><kbd>Enter</kbd> run · <kbd>Esc</kbd> close</p>
+    </div>
+  </div>
 
   <script type="module" src="./app.js"></script>
 </body>

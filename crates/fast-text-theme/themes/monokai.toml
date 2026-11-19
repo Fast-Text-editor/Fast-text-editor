@@ -1,0 +1,33 @@
+# monokai — a built-in Fast Text theme.
+name = "monokai"
+dark = true
+
+[ui]
+background = "#272822"
+foreground = "#f8f8f2"
+gutter = "#75715e"
+gutter_active = "#f8f8f2"
+cursor_line = "#31322a"
+selection = "#49483e"
+status_bg = "#1e1f1c"
+status_fg = "#f8f8f2"
+status_accent = "#a6e22e"
+prompt_bg = "#31322a"
+tab_active = "#f92672"
+tab_inactive = "#75715e"
+error = "#f92672"
+warning = "#e6db74"
+
+[syntax]
+plain = "#f8f8f2"
+keyword = "#f92672"
+type = "#66d9ef"
+function = "#a6e22e"
+string = "#e6db74"
+number = "#ae81ff"
+comment = "#75715e"
+operator = "#f92672"
+punctuation = "#f8f8f2"
+constant = "#ae81ff"
+attribute = "#a6e22e"
+variable = "#f8f8f2"
