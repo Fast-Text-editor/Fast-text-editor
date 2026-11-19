@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/fast-text-logo.svg" alt="Fast Text logo — a copper Rust glyph on a slate editor chassis" width="128" />
+</p>
+
 # Fast Text
 <img width="1556" height="941" alt="fast" src="https://github.com/user-attachments/assets/78e66a72-a1b1-462f-8183-369c0ff9fb68" />
 
@@ -77,6 +81,7 @@ cargo run -p fast-text-tui              # terminal editor: welcome buffer
 cargo run -p fast-text-tui -- file.rs   # terminal editor: one or more files
 cargo run -p fast-text-tui -- -O a.rs b.rs  # open files as split panes
 cargo run -p fast-text-tui --bin ft     # same editor, short alias
+cargo run -p fast-text-tui -- --gui [file]  # launch the desktop GUI
 cargo run -p fast-text-gui -- file.rs   # native desktop window (needs a display)
 cargo run -p textwrite -- file.tw       # run a TextWrite script
 cargo run -p textwrite                  # TextWrite REPL
@@ -233,15 +238,15 @@ Mouse editing works in the text area too: click to place the caret, drag or
 `Shift`-click to select, and scroll with the wheel. The view can be scrolled
 independently of the caret when you want to look ahead.
 
-`Alt+C` opens a **terminal panel** at the bottom of the window. It keeps a
-working directory with a `┌──(user㉿host)-[~/dir]` / `└─$` prompt, so `cd`
-persists from one command to the next and every command starts where the last
-one finished. `↑`/`↓` walk the command history, `Ctrl+W` deletes a word,
-`Ctrl+U` clears the line, `Ctrl+C` discards it, `Ctrl+L` clears the scrollback,
-and `Esc` or `Alt+C` closes the panel. Each command runs with `sh -c`, so
-variables and aliases do not survive between commands (start a shell with
-`bash` if you need that);
-output is captured as text and limited to 1000 lines.
+`Alt+C` opens a **real terminal**: Fast Text starts your `$SHELL` in a
+pseudo-terminal and renders its ANSI output in the panel, so colours, readline,
+`vim`, `htop` and other full-screen programs work just as they do in a standalone
+terminal. The session persists while the editor is open: `cd`, exports and
+aliases carry over. `↑`/`↓` are the shell's own history; `Ctrl+Up/Down` (or
+`Ctrl+PageUp/PageDown`), the mouse wheel, or the scrollbar on the panel's right
+edge browse 2000 lines of scrollback. `Esc` or `Alt+C` closes the panel without
+killing the shell. The panel resizes with the window, and a plain line editor is
+used as a fallback when a PTY cannot be opened.
 
 `Ctrl+Shift+F` (or `Alt+F`) opens **find in files**: type a query, `Tab` toggles
 case sensitivity, and `Enter` on a result jumps straight to the hit. Search runs

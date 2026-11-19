@@ -13,6 +13,7 @@ pub mod picker;
 pub mod plugin_manager;
 pub mod registry;
 pub mod sidebar;
+pub mod terminal;
 pub mod theme;
 pub mod ui;
 
@@ -49,6 +50,8 @@ struct Args {
     config: Option<PathBuf>,
     /// Open the files as split panes instead of tabs (`-O`).
     split: bool,
+    /// Launch the native GUI frontend instead of the TUI.
+    gui: bool,
     /// A `ft plugin …` / `ft install …` command instead of opening files.
     command: Option<registry::PluginCommand>,
 }
@@ -59,6 +62,7 @@ Fast Text — a fast, keyboard-driven text editor
 
 USAGE:
     fast-text [OPTIONS] [FILE]...
+    fast-text --gui [FILE]...
     fast-text plugin <COMMAND> [ARGS]
     fast-text install <NAME>... [--force]
 
@@ -66,6 +70,7 @@ OPTIONS:
     -c, --config <PATH>   Read settings from PATH instead of
                           $FAST_TEXT_CONFIG, else $XDG_CONFIG_HOME/fast-text/config.toml
     -O, --split           Open files as nested split panes instead of tabs
+        --gui             Open the native GUI frontend (fast-text-gui)
     -h, --help            Print this help and exit
     -V, --version         Print the version and exit
     --                    Treat every later argument as a file name
@@ -93,6 +98,7 @@ fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, Strin
     let mut files = Vec::new();
     let mut config = None;
     let mut split = false;
+    let mut gui = false;
     let mut command = None;
     let mut literal = false;
     let mut args = raw;
@@ -129,6 +135,7 @@ fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, Strin
                 return Ok(None);
             }
             "-O" | "--split" => split = true,
+            "--gui" => gui = true,
             "-c" | "--config" => {
                 let value = args
                     .next()
@@ -149,6 +156,7 @@ fn parse_args(raw: impl Iterator<Item = OsString>) -> Result<Option<Args>, Strin
         files,
         config,
         split,
+        gui,
         command,
     }))
 }
@@ -228,6 +236,7 @@ pub fn run_cli() -> std::io::Result<()> {
     match parse_args(std::env::args_os().skip(1)) {
         Ok(Some(args)) => match args.command {
             Some(command) => registry::run(&command),
+            None if args.gui => launch_gui(args.files),
             None => run_cli_with_layout(args.files, args.config, args.split),
         },
         Ok(None) => Ok(()), // --help / --version already printed
@@ -237,6 +246,46 @@ pub fn run_cli() -> std::io::Result<()> {
             std::process::exit(2);
         }
     }
+}
+
+/// Launches the native GUI frontend, forwarding file arguments.
+fn launch_gui(files: Vec<PathBuf>) -> std::io::Result<()> {
+    use std::process::{Command, Stdio};
+    let program = gui_program();
+    let status = Command::new(&program)
+        .args(&files)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!(
+                    "cannot launch GUI frontend '{}': {e}\nInstall fast-text-gui or run without --gui.",
+                    program.display()
+                ),
+            )
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+/// The `fast-text-gui` binary next to the current executable, or the bare name.
+fn gui_program() -> PathBuf {
+    let name = format!("fast-text-gui{}", std::env::consts::EXE_SUFFIX);
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(dir) = current.parent() {
+            let sibling = dir.join(&name);
+            if sibling.exists() {
+                return sibling;
+            }
+        }
+    }
+    PathBuf::from(name)
 }
 
 /// Runs the editor with an explicit list of files to open.
@@ -287,6 +336,9 @@ fn event_loop(
     // `--config` wins; otherwise the usual XDG location.
     let config = Config::load_from(config_path.or_else(Config::path));
     let mut app = App::with_config_and_layout(files, config, split);
+    if let Ok(size) = terminal.size() {
+        app.set_terminal_size(size.width, size.height);
+    }
     // Clear out the `.old` twins a previous self-update left behind, then ask
     // GitHub about newer releases in the background (throttled to once a day,
     // and off when `check_updates = false` / `FAST_TEXT_UPDATE_CHECK=0`).
@@ -316,7 +368,7 @@ fn event_loop(
                 Event::Mouse(mouse) => {
                     app.handle_mouse(mouse);
                 }
-                Event::Resize(_, _) => {}
+                Event::Resize(width, height) => app.set_terminal_size(width, height),
                 _ => {}
             }
         }
@@ -338,6 +390,18 @@ mod tests {
         let args = parse(&["notes.md"]).unwrap().unwrap();
         assert_eq!(args.files, vec![PathBuf::from("notes.md")]);
         assert_eq!(args.config, None);
+        assert!(!args.gui);
+    }
+
+    #[test]
+    fn gui_flag_requests_the_desktop_frontend() {
+        let args = parse(&["--gui", "a.rs", "b.rs"]).unwrap().unwrap();
+        assert!(args.gui);
+        assert_eq!(
+            args.files,
+            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]
+        );
+        assert!(!parse(&["a.rs"]).unwrap().unwrap().gui);
     }
 
     #[test]

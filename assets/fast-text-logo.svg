@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Rust Text Editor Icon">
+  <defs>
+    <linearGradient id="chassis" x1="0" y1="8" x2="0" y2="248" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E2229"/>
+      <stop offset="100%" stop-color="#111418"/>
+    </linearGradient>
+
+    <linearGradient id="glyph" x1="68" y1="52" x2="176" y2="204" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#EA580C"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#chassis)"/>
+  <rect x="9" y="9" width="238" height="238" rx="51" fill="none" stroke="#2C323D" stroke-width="2"/>
+
+  <rect x="44" y="64" width="10" height="128" rx="5" fill="#242933"/>
+  <rect x="132" y="156" width="56" height="12" rx="6" fill="#292F3A"/>
+
+  <path
+    d="M72 56 H184 V84 H104 V116 H168 V144 H104 V200 H72 Z"
+    fill="url(#glyph)"/>
+
+  <rect x="132" y="176" width="44" height="24" rx="4" fill="#FBBF24"/>
+</svg>

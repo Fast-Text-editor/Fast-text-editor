@@ -30,10 +30,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install GUI build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libx11-dev libxi-dev \
-            libgl1-mesa-dev libxcursor-dev libxrandr-dev libxinerama-dev
+          # Ubuntu mirrors occasionally drop apt connections; retry before
+          # failing the whole job.
+          for attempt in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+              libxkbcommon-dev libwayland-dev libx11-dev libxi-dev \
+              libgl1-mesa-dev libxcursor-dev libxrandr-dev libxinerama-dev; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying" >&2
+          done
+          exit 1
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
@@ -50,10 +57,15 @@ jobs:
       - name: Install GUI build dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libx11-dev libxi-dev \
-            libgl1-mesa-dev libxcursor-dev libxrandr-dev libxinerama-dev
+          for attempt in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+              libxkbcommon-dev libwayland-dev libx11-dev libxi-dev \
+              libgl1-mesa-dev libxcursor-dev libxrandr-dev libxinerama-dev; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying" >&2
+          done
+          exit 1
       - run: cargo test -p fast-text-core -p fast-text-syntax -p fast-text-lsp -p fast-text-plugin -p fast-text-textwrite -p textwrite -p fast-text-update -p fast-text-tui -p fast-text-gui
 
   install-script:

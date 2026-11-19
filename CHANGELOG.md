@@ -4,6 +4,33 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-11-19
+
+### Added
+
+- **A real terminal emulator** behind `Alt+C`: the console now attaches a
+  persistent shell through a pseudo-terminal (`portable-pty`) and renders its
+  ANSI output with a small `vte`-driven character grid. Colours, cursor keys,
+  readline, and full-screen programs such as `vim` and `htop` work; the panel
+  follows window resizes. A scrollbar on the panel's right edge shows where you
+  are in 2000 lines of history; `Ctrl+Up/Down` (or `Ctrl+PageUp/PageDown`), the
+  mouse wheel, and clicking the scrollbar all browse it. The old line editor
+  remains as a fallback when no PTY is available, and no process is spawned in
+  tests.
+- **One SVG logo** (`assets/fast-text-logo.svg`) used by both the README and
+  the native GUI window icon. The GUI rasterizes the SVG at startup with
+  `resvg`, so there is no second, drifting copy of the artwork.
+- **`ft --gui` / `fast-text --gui`** launches the native desktop frontend from
+  the TUI CLI, forwarding file arguments to `fast-text-gui`.
+
+### Fixed
+
+- Persistent undo now records and compares **canonical paths**. A document
+  opened through a symlink or macOS's `/var` alias restores its history
+  reliably on macOS and Windows; the restored document also keeps its path.
+- The welcome buffer uses short lines so it stays readable in narrow terminals.
+- CI retries Ubuntu `apt` setup three times to absorb transient mirror drops.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added

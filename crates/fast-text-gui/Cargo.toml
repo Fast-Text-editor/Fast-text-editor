@@ -25,3 +25,4 @@ fast-text-syntax.workspace = true
 fast-text-update.workspace = true
 fast-text-theme.workspace = true
 fast-text-plugin = { workspace = true, features = ["rhai"] }
+resvg = "0.50"

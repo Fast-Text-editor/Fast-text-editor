@@ -23,6 +23,7 @@ use crate::lsp::{InstallHint, LspManager};
 use crate::picker::{Picker, PickerItem, PickerOutcome};
 use crate::plugin_manager::{ManagerAction, PluginManager};
 use crate::sidebar::{Sidebar, SidebarAction};
+use crate::terminal::{key_bytes, ShellSession};
 use crate::theme::{normalize_name, Theme};
 
 /// A single open buffer plus its view state (scroll, highlight cache).
@@ -803,6 +804,16 @@ pub struct App {
     console_history_index: Option<usize>,
     /// The half-typed command set aside while browsing history.
     console_draft: String,
+    /// Live PTY shell backing the console, created lazily by the event loop.
+    pub shell: Option<ShellSession>,
+    /// Full editor size in cells, used to size the PTY when the panel opens.
+    terminal_size: (u16, u16),
+    /// How many history rows the terminal view is scrolled back.
+    pub terminal_scroll: usize,
+    /// Why a PTY shell could not be started, shown instead of a dead terminal.
+    pub terminal_error: Option<String>,
+    /// Console panel rectangle from the last draw, used by mouse scrolling.
+    pub console_area: Option<Rect>,
     /// Actions scheduled for future frames by a timed automation.
     pending: VecDeque<(Instant, EditorAction)>,
     /// Sorted names of every selectable language (curated + imported).
@@ -865,6 +876,14 @@ pub struct App {
 /// The sentinel the console's shell prints after every command so the editor
 /// can learn the directory the command ended in.
 const CONSOLE_CWD_SENTINEL: &str = "__fast_text_cwd__";
+
+/// The PTY size implied by the fixed-height console panel.
+fn console_ppty_size((cols, rows): (u16, u16)) -> (u16, u16) {
+    (
+        cols.saturating_sub(2).max(1),
+        rows.saturating_sub(2).clamp(1, 8),
+    )
+}
 
 /// The user's home directory, or `/` when `HOME` is unset.
 fn home_dir() -> PathBuf {
@@ -975,7 +994,30 @@ impl App {
         }
         if editors.is_empty() {
             editors.push(Editor::from_text(
-                "// Welcome to Fast Text\n//\n// Alt+H help  ·  Ctrl+S save  ·  Ctrl+O open  ·  Ctrl+L language  ·  Ctrl+Q quit\n//\n// Ctrl+P finds files  ·  Ctrl+Shift+P runs commands  ·  Alt+R runs TextWrite.\n//\n// Ctrl+B toggles the folder explorer  ·  Ctrl+Shift+O picks its folder.\n// In the explorer: n = new file  ·  N = new folder  ·  Enter opens.\n// Alt+C opens the terminal  ·  cd persists between commands, Esc closes it.\n// Alt+V toggles Vim  ·  Alt+: opens the : command bar.\n// Click a file in the explorer, a tab, or its ✕ to open, switch, or close.\n//\n// Rebind keys in ~/.config/fast-text/config.toml  (Ctrl+Shift+P → Open config file).\n\nfn main() {\n    println!(\"Hello, world!\");\n}\n",
+                concat!(
+                    "// Welcome to Fast Text\n",
+                    "//\n",
+                    "// Alt+H help     Ctrl+S save\n",
+                    "// Ctrl+O open    Ctrl+Q quit\n",
+                    "// Ctrl+P files   Ctrl+Shift+P\n",
+                    "// Ctrl+L lang    Ctrl+T theme\n",
+                    "// Alt+R scripts  Alt+C term\n",
+                    "//\n",
+                    "// Ctrl+B explorer\n",
+                    "// Ctrl+Shift+O pick folder\n",
+                    "// Explorer: n/N file/folder\n",
+                    "// Alt+V Vim   Alt+: bar\n",
+                    "// Ctrl+arrows switch panes\n",
+                    "// Click file/tab/X to open\n",
+                    "//\n",
+                    "// Config: ~/.config/fast-text/\n",
+                    "//   config.toml\n",
+                    "// (Ctrl+Shift+P -> Open config)\n",
+                    "\n",
+                    "fn main() {\n",
+                    "    println!(\"Hello, world!\");\n",
+                    "}\n",
+                ),
                 LanguageId::Rust,
             ));
         }
@@ -1034,6 +1076,11 @@ impl App {
             console_history: Vec::new(),
             console_history_index: None,
             console_draft: String::new(),
+            shell: None,
+            terminal_size: (80, 24),
+            terminal_scroll: 0,
+            terminal_error: None,
+            console_area: None,
             language_names: all_language_names(),
             pending: VecDeque::new(),
             sidebar,
@@ -1068,6 +1115,87 @@ impl App {
     /// Toggles the console panel.
     pub fn toggle_console(&mut self) {
         self.console_visible = !self.console_visible;
+        if self.console_visible {
+            self.terminal_scroll = 0;
+        }
+    }
+
+    /// Tells the app how large the editor is so the PTY can match the panel.
+    ///
+    /// Called by the event loop, never by tests, so no shell is spawned in a
+    /// unit test.
+    pub fn set_terminal_size(&mut self, cols: u16, rows: u16) {
+        self.terminal_size = (cols.max(1), rows.max(1));
+    }
+
+    /// Spawns or resizes the console shell and drains its output.
+    pub fn poll_terminal(&mut self) {
+        if !self.console_visible {
+            return;
+        }
+        let (cols, rows) = console_ppty_size(self.terminal_size);
+        if self.shell.is_none() && self.terminal_error.is_none() {
+            match ShellSession::spawn(cols, rows, &self.console_cwd) {
+                Ok(session) => self.shell = Some(session),
+                Err(error) => {
+                    self.console_output
+                        .push(format!("terminal unavailable: {error}"));
+                    self.terminal_error = Some(error);
+                }
+            }
+        }
+        if let Some(shell) = self.shell.as_mut() {
+            shell.resize(cols, rows);
+            shell.pump();
+        }
+    }
+
+    /// Whether a live PTY shell is receiving keys.
+    pub fn terminal_active(&self) -> bool {
+        self.shell.as_ref().is_some_and(|shell| shell.alive)
+    }
+
+    /// Scrolls the console view. Negative `delta` moves back into history;
+    /// positive `delta` moves towards the live end.
+    pub fn scroll_terminal(&mut self, delta: isize) {
+        let available = match self.shell.as_ref() {
+            Some(shell) => shell.screen.scrollback_len(),
+            None => self.console_output.len(),
+        };
+        self.terminal_scroll = if delta < 0 {
+            (self.terminal_scroll as isize + delta.unsigned_abs() as isize)
+                .clamp(0, available as isize) as usize
+        } else {
+            self.terminal_scroll.saturating_sub(delta as usize)
+        };
+    }
+
+    /// How many history rows one `Ctrl+PageUp/Down` jumps.
+    fn console_page_rows(&self) -> isize {
+        console_ppty_size(self.terminal_size).1 as isize
+    }
+
+    /// Whether a screen cell belongs to the visible console panel.
+    fn console_contains(&self, column: u16, row: u16) -> bool {
+        self.console_visible
+            && self
+                .console_area
+                .is_some_and(|area| rect_contains(area, column, row))
+    }
+
+    /// Jumps the console history to the scrollbar position under `row`.
+    fn scroll_terminal_to_row(&mut self, area: Rect, row: u16) {
+        let available = match self.shell.as_ref() {
+            Some(shell) => shell.screen.scrollback_len(),
+            None => self.console_output.len(),
+        };
+        if available == 0 || area.height < 3 {
+            return;
+        }
+        let track = area.height as usize - 2;
+        let offset = (row.saturating_sub(area.y + 1) as usize).min(track - 1);
+        let position = ((offset * available + track / 2) / track).min(available);
+        self.terminal_scroll = available - position;
     }
 
     /// The Kali-style first prompt line: `┌──(user㉿host)-[~/dir]`.
@@ -1209,7 +1337,62 @@ impl App {
     pub fn handle_console_key(&mut self, key: KeyEvent) -> bool {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.terminal_active() {
+            // Alt+C and Esc belong to the editor; Ctrl+Up/Down scroll the
+            // terminal's history. Everything else goes to the shell verbatim.
+            match key.code {
+                KeyCode::Char('c') if alt => {
+                    self.console_visible = false;
+                    return true;
+                }
+                KeyCode::Esc => {
+                    self.console_visible = false;
+                    return true;
+                }
+                KeyCode::Up if ctrl => {
+                    self.scroll_terminal(-1);
+                    return true;
+                }
+                KeyCode::Down if ctrl => {
+                    self.scroll_terminal(1);
+                    return true;
+                }
+                KeyCode::PageUp if ctrl => {
+                    self.scroll_terminal(-self.console_page_rows());
+                    return true;
+                }
+                KeyCode::PageDown if ctrl => {
+                    self.scroll_terminal(self.console_page_rows());
+                    return true;
+                }
+                _ => {}
+            }
+            let bytes = key_bytes(key);
+            if !bytes.is_empty() {
+                self.terminal_scroll = 0;
+                if let Some(shell) = self.shell.as_mut() {
+                    shell.write(&bytes);
+                }
+            }
+            return true;
+        }
         match key.code {
+            KeyCode::Up if ctrl => {
+                self.scroll_terminal(-1);
+                return true;
+            }
+            KeyCode::Down if ctrl => {
+                self.scroll_terminal(1);
+                return true;
+            }
+            KeyCode::PageUp if ctrl => {
+                self.scroll_terminal(-self.console_page_rows());
+                return true;
+            }
+            KeyCode::PageDown if ctrl => {
+                self.scroll_terminal(self.console_page_rows());
+                return true;
+            }
             KeyCode::Char('c') if alt => {
                 self.console_visible = false;
             }
@@ -2217,6 +2400,7 @@ impl App {
     /// automation actions, then keeps servers in sync with edits and picks up
     /// freshly published diagnostics.
     pub fn tick(&mut self) {
+        self.poll_terminal();
         self.poll_update_events();
         self.poll_lsp_install_events();
         self.run_pending();
@@ -3221,6 +3405,34 @@ impl App {
     /// Handles one mouse event, returning true when the UI should redraw.
     pub fn handle_mouse(&mut self, event: MouseEvent) -> bool {
         match event.kind {
+            MouseEventKind::Down(MouseButton::Left)
+                if self.console_contains(event.column, event.row) =>
+            {
+                if let Some(area) = self.console_area {
+                    if area.width > 1 && event.column == area.x + area.width - 1 {
+                        self.scroll_terminal_to_row(area, event.row);
+                    }
+                }
+                true
+            }
+            MouseEventKind::Drag(MouseButton::Left)
+                if self.console_contains(event.column, event.row) =>
+            {
+                if let Some(area) = self.console_area {
+                    if area.width > 1 && event.column == area.x + area.width - 1 {
+                        self.scroll_terminal_to_row(area, event.row);
+                    }
+                }
+                true
+            }
+            MouseEventKind::ScrollUp if self.console_contains(event.column, event.row) => {
+                self.scroll_terminal(-3);
+                true
+            }
+            MouseEventKind::ScrollDown if self.console_contains(event.column, event.row) => {
+                self.scroll_terminal(3);
+                true
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.click(event.column, event.row, event.modifiers)
             }
@@ -6553,6 +6765,17 @@ mod tests {
         app.handle_key(key(KeyCode::Esc));
         assert!(!app.console_visible);
         assert_eq!(app.console_input, "echo h");
+    }
+
+    #[test]
+    fn console_ctrl_arrows_scroll_fallback_history() {
+        let mut app = empty_app();
+        app.toggle_console();
+        app.console_output = (0..20).map(|i| format!("line {i}")).collect();
+        app.handle_console_key(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL));
+        assert_eq!(app.terminal_scroll, 1);
+        app.handle_console_key(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL));
+        assert_eq!(app.terminal_scroll, 0);
     }
 
     #[test]

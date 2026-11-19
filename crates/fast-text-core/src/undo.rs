@@ -65,6 +65,31 @@ pub fn cache_dir() -> PathBuf {
     std::env::temp_dir().join("fast-text").join("undo")
 }
 
+/// Resolves a path as far as the filesystem allows, then makes it absolute.
+///
+/// macOS reports `/var/...` for `std::env::temp_dir()` but canonicalizes it to
+/// `/private/var/...`, and Windows canonicalization adds a `\\?\` prefix. Using
+/// one normalized form for both the cache key and the recorded path keeps
+/// snapshots loadable through any spelling of the same file.
+fn canonical_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical;
+    }
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|dir| dir.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Whether a recorded session path still identifies `document_path`.
+fn paths_match(recorded: &str, document_path: &Path) -> bool {
+    let expected = canonical_path(document_path);
+    let recorded = Path::new(recorded);
+    recorded == expected || canonical_path(recorded) == expected
+}
+
 /// A stable FNV-1a hash, used to turn a path into a file name.
 fn path_hash(text: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
@@ -77,8 +102,7 @@ fn path_hash(text: &str) -> u64 {
 
 /// The snapshot path for a document path, or `None` for an untitled buffer.
 pub fn path_for(document: &Path) -> Option<PathBuf> {
-    let absolute = std::fs::canonicalize(document).unwrap_or_else(|_| document.to_path_buf());
-    let key = absolute.to_string_lossy();
+    let key = canonical_path(document).to_string_lossy().into_owned();
     Some(cache_dir().join(format!("{:016x}.json", path_hash(&key))))
 }
 
@@ -101,6 +125,9 @@ pub fn save(document: &Document) -> crate::Result<Option<PathBuf>> {
         })?;
     }
     let mut session = document.snapshot();
+    // Record the canonical spelling so `load` can compare like-for-like even
+    // when the caller opened the file through a symlink or a relative path.
+    session.path = Some(canonical_path(document_path).to_string_lossy().into_owned());
     // Keep only the newest transactions so a marathon session cannot produce a
     // multi-megabyte cache file.
     let undo = session.history.undo_transactions();
@@ -152,16 +179,20 @@ pub fn load(document_path: &Path) -> Option<Document> {
     let target = path_for(document_path)?;
     let bytes = std::fs::read(&target).ok()?;
     let session: Session = serde_json::from_slice(&bytes).ok()?;
-    let expected =
-        std::fs::canonicalize(document_path).unwrap_or_else(|_| document_path.to_path_buf());
     match session.path.as_deref() {
         // The hash already pins the path, but check the recorded path too so a
-        // hash collision can never restore the wrong document.
-        Some(recorded) if Path::new(recorded) == expected => {}
+        // hash collision can never restore the wrong document. Compare through
+        // each path's canonical form: `save` records one, a caller may pass the
+        // other (notably `/var` vs `/private/var` on macOS).
+        Some(recorded) if paths_match(recorded, document_path) => {}
         Some(_) => return None,
         None => {}
     }
-    Some(Document::restore(session))
+    let mut document = Document::restore(session);
+    document
+        .buffer_mut()
+        .set_path(canonical_path(document_path));
+    Some(document)
 }
 
 /// Removes the snapshot for a document path, if any.
@@ -258,6 +289,30 @@ mod tests {
         clear(&path).unwrap();
         assert!(!written.exists());
         clear(&path).unwrap(); // idempotent
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshots_load_through_a_non_canonical_alias() {
+        let (_guard, dir) = isolated_dir("alias");
+        let path = dir.join("file.txt");
+        std::fs::write(&path, "hello").unwrap();
+        let mut doc = Document::from_file(&path).unwrap();
+        doc.set_cursor(doc.text().len());
+        doc.insert_str(" world");
+        let written = save(&doc).unwrap().unwrap();
+
+        // Record and accept the canonical spelling, even when the caller uses
+        // a dotted or symlinked path (macOS temp dirs are the common case).
+        let session: Session = serde_json::from_slice(&std::fs::read(&written).unwrap()).unwrap();
+        assert_eq!(
+            session.path.as_deref(),
+            Some(canonical_path(&path).to_str().unwrap())
+        );
+        let alias = dir.join(".").join("file.txt");
+        let restored = load(&alias).expect("snapshot through an alias");
+        assert_eq!(restored.text(), "hello world");
+        assert_eq!(restored.path(), Some(canonical_path(&path).as_path()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

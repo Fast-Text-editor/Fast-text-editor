@@ -18,9 +18,31 @@ use fast_text_syntax::LanguageId;
 use fast_text_theme::{Rgb, Theme};
 use fast_text_update::Release;
 use highlight::{highlight_job, Palette};
+use std::sync::Arc;
 
 /// The version this build was compiled at, shown in the title and status bars.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The first-party logo, packaged with the crate so it builds from crates.io.
+const LOGO_SVG: &[u8] = include_bytes!("../assets/fast-text-logo.svg");
+
+/// Rasterizes `LOGO_SVG` into the RGBA icon egui expects.
+fn app_icon() -> Option<egui::IconData> {
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(LOGO_SVG, &options).ok()?;
+    let size = tree.size().to_int_size();
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    Some(egui::IconData {
+        rgba: pixmap.take_demultiplied(),
+        width: size.width(),
+        height: size.height(),
+    })
+}
 
 /// Id of the toolbar's Find field, so `Ctrl+F` can focus it.
 fn find_input() -> egui::Id {
@@ -28,11 +50,15 @@ fn find_input() -> egui::Id {
 }
 
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1000.0, 700.0])
+        .with_min_inner_size([480.0, 320.0])
+        .with_title(format!("Fast Text v{VERSION}"));
+    if let Some(icon) = app_icon() {
+        viewport = viewport.with_icon(Arc::new(icon));
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000.0, 700.0])
-            .with_min_inner_size([480.0, 320.0])
-            .with_title(format!("Fast Text v{VERSION}")),
+        viewport,
         ..Default::default()
     };
 

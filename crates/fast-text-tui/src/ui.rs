@@ -4,12 +4,15 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, EditorHit, PaneLayout, Prompt, SplitDirection, TabHit};
 use crate::plugin_manager::ManagerTab;
+use crate::terminal::Cell;
 
 const TAB_WIDTH: usize = 4;
 
@@ -74,6 +77,8 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     }
     let status = chunks[idx];
     idx += 1;
+    // Remember the panel's rectangle so mouse wheel/clicks can scroll it.
+    app.console_area = console_area;
 
     // The folder explorer, when visible, claims a column on the left.
     let editor_area = if app.sidebar.visible() {
@@ -1179,7 +1184,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+←/↑ Prev pane  Ctrl+→/↓ Next pane"),
         Line::from(" Alt+1/2/3  Cursor bar/block/underline"),
         Line::from(" Alt+R  Run automation  Alt+H  Help"),
-        Line::from(" Alt+C  Terminal  ·  Alt+U  Check for updates"),
+        Line::from(" Alt+C  Terminal (PTY)  ·  Alt+U  Check for updates"),
         Line::from(" Alt+V  Vim layer  ·  Alt+: / :  Command bar (:w :q :theme…)"),
         Line::from(" Shift+Arrows  Select  Alt+←/→  Word move"),
         Line::from(" Alt+↑/↓  Move line   Alt+Shift+↑/↓  Add cursors"),
@@ -1978,15 +1983,46 @@ fn draw_top_bar(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Turns styled terminal cells into one ratatui line.
+fn terminal_line(cells: &[Cell]) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut pending = String::new();
+    let mut style = Style::default();
+    for cell in cells {
+        if cell.ch == '\0' {
+            continue;
+        }
+        let cell_style = cell.style();
+        if cell_style != style && !pending.is_empty() {
+            spans.push(Span::styled(std::mem::take(&mut pending), style));
+        }
+        style = cell_style;
+        pending.push(cell.ch);
+    }
+    if !pending.is_empty() {
+        spans.push(Span::styled(pending, style));
+    }
+    Line::from(spans)
+}
+
+/// Number of scrollable history rows in either console mode.
+fn console_history_len(app: &App) -> usize {
+    match app.shell.as_ref() {
+        Some(shell) => shell.screen.scrollback_len(),
+        None => app.console_output.len(),
+    }
+}
+
 /// Draws the bottom console panel.
-fn draw_console(app: &mut App, frame: &mut Frame, area: Rect) {
+fn draw_console(app: &App, frame: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    let hint = " Alt+C close  ·  Ctrl+↑↓ scroll  ·  mouse wheel  ·  ↑↓ history ";
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Terminal ")
-        .title(Line::from(" Alt+C close  ·  ↑↓ history  ·  Ctrl+L clear ").right_aligned())
+        .title(Line::from(hint).right_aligned())
         .border_style(Style::default().fg(app.theme.gutter))
         .title_style(Style::default().fg(app.theme.gutter));
     let inner = block.inner(area);
@@ -1995,41 +2031,120 @@ fn draw_console(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // The prompt takes the last two rows: the directory header and the line
-    // the user types on. Everything above scrolls.
-    let prompt_rows = inner.height.min(2) as usize;
-    let scroll_rows = inner.height as usize - prompt_rows;
-    let output = &app.console_output;
-    let visible_start = output.len().saturating_sub(scroll_rows);
-    let mut lines: Vec<Line> = output[visible_start..]
-        .iter()
-        .map(|line| Line::from(line.as_str()))
-        .collect();
-    if prompt_rows >= 2 {
-        lines.push(Line::from(Span::styled(
-            app.console_prompt_header(),
-            Style::default().fg(app.theme.gutter),
-        )));
+    // Keep the rightmost column free for a scrollbar once there is history.
+    let history = console_history_len(app);
+    let has_bar = history > 0 && inner.width > 1;
+    let text_width = inner.width - u16::from(has_bar);
+    let text_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: text_width,
+        height: inner.height,
+    };
+
+    if let Some(shell) = app.shell.as_ref() {
+        // A real PTY shell: render its parsed screen, including colours.
+        let lines: Vec<Line<'static>> = shell
+            .screen
+            .lines(app.terminal_scroll)
+            .into_iter()
+            .map(terminal_line)
+            .collect();
+        frame.render_widget(Paragraph::new(lines), text_area);
+    } else {
+        // Fallback line editor, used until the PTY is ready and in unit tests.
+        let prompt_rows = inner.height.min(2) as usize;
+        let scroll_rows = inner.height as usize - prompt_rows;
+        let output = &app.console_output;
+        let max_scroll = output.len().saturating_sub(scroll_rows);
+        let scroll = app.terminal_scroll.min(max_scroll);
+        let end = output.len() - scroll;
+        let start = end.saturating_sub(scroll_rows);
+        let mut lines: Vec<Line> = output[start..end]
+            .iter()
+            .map(|line| Line::from(line.as_str()))
+            .collect();
+        if prompt_rows >= 2 {
+            lines.push(Line::from(Span::styled(
+                app.console_prompt_header(),
+                Style::default().fg(app.theme.gutter),
+            )));
+        }
+        let lead = app.console_prompt_lead();
+        lines.push(Line::from(vec![
+            Span::styled(lead, Style::default().fg(app.theme.status_accent)),
+            Span::raw(app.console_input.as_str()),
+        ]));
+        frame.render_widget(Paragraph::new(lines), text_area);
     }
-    let lead = app.console_prompt_lead();
-    lines.push(Line::from(vec![
-        Span::styled(lead, Style::default().fg(app.theme.status_accent)),
-        Span::raw(app.console_input.as_str()),
-    ]));
-    frame.render_widget(Paragraph::new(lines), inner);
+
+    if has_bar {
+        // `position` is the first visible history row. At the live end it sits
+        // after all scrollback, so the thumb rests at the bottom of the track.
+        let (content_length, position, viewport) = match app.shell.as_ref() {
+            Some(shell) => {
+                let rows = shell.screen.rows();
+                (
+                    history + rows,
+                    history - app.terminal_scroll.min(history),
+                    rows,
+                )
+            }
+            None => {
+                let prompt_rows = inner.height.min(2) as usize;
+                let viewport = inner.height as usize - prompt_rows;
+                (
+                    history,
+                    history - app.terminal_scroll.min(history),
+                    viewport.max(1),
+                )
+            }
+        };
+        let mut state = ScrollbarState::new(content_length)
+            .position(position)
+            .viewport_content_length(viewport);
+        let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(Style::default().fg(app.theme.gutter))
+            .thumb_style(Style::default().fg(app.theme.status_accent));
+        frame.render_stateful_widget(
+            bar,
+            Rect {
+                x: inner.x + inner.width - 1,
+                y: inner.y,
+                width: 1,
+                height: inner.height,
+            },
+            &mut state,
+        );
+    }
 }
 
 /// Places the terminal cursor at the end of the console input.
 fn place_console_cursor(app: &App, frame: &mut Frame, area: Rect) {
-    if area.width < 3 || area.height < 3 {
+    let inner_width = area.width.saturating_sub(2);
+    if inner_width == 0 || area.height < 3 {
         return;
     }
     let inner_x = area.x + 1;
-    let inner_width = area.width - 2;
+    let inner_y = area.y + 1;
+    let inner_height = area.height - 2;
+    let has_bar = console_history_len(app) > 0 && inner_width > 1;
+    let text_width = inner_width - u16::from(has_bar);
+    if let Some(shell) = app.shell.as_ref() {
+        if app.terminal_scroll == 0 && shell.alive {
+            let (col, row) = shell.screen.cursor();
+            let x = inner_x + (col as u16).min(text_width - 1);
+            let y = inner_y + (row as u16).min(inner_height - 1);
+            frame.set_cursor_position((x, y));
+        }
+        return;
+    }
     let lead = app.console_prompt_lead();
     let x = inner_x + lead.chars().count() as u16 + app.console_input.chars().count() as u16;
-    let x = x.min(inner_x + inner_width - 1);
-    frame.set_cursor_position((x, area.y + area.height - 2));
+    let x = x.min(inner_x + text_width - 1);
+    frame.set_cursor_position((x, inner_y + inner_height.saturating_sub(1)));
 }
 
 #[cfg(test)]
@@ -2249,6 +2364,20 @@ mod tests {
             colors.contains(&expected),
             "comment color {expected:?} missing — tokens after line 1 are not highlighted"
         );
+    }
+
+    #[test]
+    fn the_console_draws_a_scrollbar_for_history() {
+        let mut app = App::new(vec![]);
+        app.toggle_console();
+        app.console_output = (0..30).map(|i| format!("old line {i}")).collect();
+        let live = render(&mut app, 80, 16);
+        assert!(live.contains('║'), "scrollbar track missing:\n{live}");
+        assert!(live.contains('█'), "scrollbar thumb missing:\n{live}");
+
+        app.terminal_scroll = 20;
+        let older = render(&mut app, 80, 16);
+        assert_ne!(live, older, "thumb did not move when scrolling history");
     }
 
     #[test]
