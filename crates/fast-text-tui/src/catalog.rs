@@ -212,6 +212,48 @@ pub const CATALOG: &[CatalogPlugin] = &[
                       keep only the error lines",
         source: include_str!("../plugin-catalog/log_summary.tw"),
     },
+    CatalogPlugin {
+        file_name: "lorem.tw",
+        title: "Lorem ipsum",
+        description: "Insert placeholder sentences, paragraphs, lists and titles for \
+                      drafting and layout testing",
+        source: include_str!("../plugin-catalog/lorem.tw"),
+    },
+    CatalogPlugin {
+        file_name: "slugify.tw",
+        title: "Slugify",
+        description: "Convert selected text into URL slugs and filename-safe fragments \
+                      with hyphens, underscores or dots",
+        source: include_str!("../plugin-catalog/slugify.tw"),
+    },
+    CatalogPlugin {
+        file_name: "escape.tw",
+        title: "Escape tools",
+        description: "Escape, unescape and quote strings using JSON-style backslash \
+                      sequences",
+        source: include_str!("../plugin-catalog/escape.tw"),
+    },
+    CatalogPlugin {
+        file_name: "extract.tw",
+        title: "Extract",
+        description: "Extract emails, URLs, numbers and unique lines from the \
+                      selection or document",
+        source: include_str!("../plugin-catalog/extract.tw"),
+    },
+    CatalogPlugin {
+        file_name: "number_base.tw",
+        title: "Number base",
+        description: "Convert integers between decimal, hexadecimal and binary, and \
+                      increment or decrement values",
+        source: include_str!("../plugin-catalog/number_base.tw"),
+    },
+    CatalogPlugin {
+        file_name: "checklist.tw",
+        title: "Checklist",
+        description: "Toggle Markdown checkboxes, add or remove bullets, and indent \
+                      or outdent selected lines",
+        source: include_str!("../plugin-catalog/checklist.tw"),
+    },
 ];
 
 /// The catalog entry with this file name, if any.

@@ -4,6 +4,35 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-20
+
+### Added
+
+- **Six new first-party TextWrite plugins**, bringing the catalog to 32:
+  `lorem` (placeholder text), `slugify` (URL slugs and filename-safe text),
+  `escape` (JSON/string escape, unescape and quoting), `extract` (emails,
+  URLs, numbers and unique lines), `number-base` (decimal/hex/binary
+  conversion and increment/decrement), and `checklist` (toggle checkboxes,
+  bullets, and indent/outdent lines).
+- **Updater progress bar**: update checks/downloads now report staged progress,
+  and the TUI and GUI update dialogs render a visual progress bar while an
+  update is being downloaded, unpacked, and installed.
+- **Configurable console shell per OS**: `config.toml` gains a `[console]`
+  section (`windows`, `linux`, `macos`) to choose which shell the terminal
+  panel (`Alt+C`) launches. Windows can select the default shell, Command
+  Prompt (`cmd`), Windows PowerShell, or PowerShell 7 (`pwsh`); macOS and
+  Linux can select the default `$SHELL` or common shells. Command palette
+  actions let you pick the console shell for the current platform and persist
+  the choice to the config file.
+- **Config access from the command palette**: the config file can be opened
+  directly from the command palette (`Open config file`), and the config
+  template documents console shell and keybinding options.
+
+### Changed
+
+- The welcome buffer uses shorter lines and the help overlay wraps/adapts
+  better so key hints remain readable in narrow terminals.
+
 ## [0.5.1] - 2026-11-19
 
 ### Added

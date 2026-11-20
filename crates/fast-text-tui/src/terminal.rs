@@ -456,9 +456,13 @@ impl std::fmt::Debug for ShellSession {
 impl ShellSession {
     /// Spawns the user's shell in a PTY sized to the console panel.
     ///
-    /// This is only called from the event loop. Tests never construct a
-    /// `ShellSession`, so they never spawn a process.
-    pub fn spawn(cols: u16, rows: u16, cwd: &Path) -> Result<Self, String> {
+    /// `shell_pref` selects the program: `"default"` uses the platform shell
+    /// (`COMSPEC`/`cmd.exe` on Windows, `$SHELL -i` on Unix). On Windows,
+    /// `"cmd"`, `"powershell"` and `"pwsh"` pick those shells; any other value
+    /// is treated as a program path/name. This is only called from the event
+    /// loop. Tests never construct a `ShellSession`, so they never spawn a
+    /// process.
+    pub fn spawn(cols: u16, rows: u16, cwd: &Path, shell_pref: &str) -> Result<Self, String> {
         let size = PtySize {
             rows: rows.max(1),
             cols: cols.max(1),
@@ -470,19 +474,41 @@ impl ShellSession {
             .openpty(size)
             .map_err(|e| format!("cannot open a terminal: {e}"))?;
 
+        let pref = shell_pref.trim();
         let mut command = if cfg!(windows) {
-            let shell = std::env::var_os("COMSPEC")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("cmd.exe"));
-            CommandBuilder::new(shell)
+            match pref.to_ascii_lowercase().as_str() {
+                "" | "default" => {
+                    let shell = std::env::var_os("COMSPEC")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("cmd.exe"));
+                    CommandBuilder::new(shell)
+                }
+                "cmd" | "cmd.exe" => CommandBuilder::new("cmd.exe"),
+                "powershell" | "powershell.exe" => {
+                    let mut cmd = CommandBuilder::new("powershell.exe");
+                    cmd.arg("-NoLogo");
+                    cmd
+                }
+                "pwsh" => {
+                    let mut cmd = CommandBuilder::new("pwsh");
+                    cmd.arg("-NoLogo");
+                    cmd
+                }
+                _ => CommandBuilder::new(pref),
+            }
         } else {
-            let shell = std::env::var_os("SHELL")
-                .filter(|value| !value.is_empty())
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("/bin/sh"));
-            let mut command = CommandBuilder::new(shell);
-            command.arg("-i");
-            command
+            match pref {
+                "" | "default" => {
+                    let shell = std::env::var_os("SHELL")
+                        .filter(|value| !value.is_empty())
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("/bin/sh"));
+                    let mut command = CommandBuilder::new(shell);
+                    command.arg("-i");
+                    command
+                }
+                _ => CommandBuilder::new(pref),
+            }
         };
         command.env("TERM", "xterm-256color");
         command.cwd(cwd);

@@ -1,0 +1,156 @@
+# Extract items from text for Fast Text — a TextWrite plugin.
+#
+# Scans the selection (or the whole document) and collects emails, URLs or
+# numbers, inserting each match on its own line. Helpful for pulling contacts,
+# links and figures out of logs, notes and copied pages.
+
+fn ext_source() {
+    if has_selection {
+        return selected_text
+    }
+    return document_text
+}
+
+fn ext_is_space(c) {
+    return c is " " or c is "\t" or c is "\n" or c is "\r"
+}
+
+fn ext_trim_punct(token) {
+    let left = 0
+    let right = len(token)
+    let edge = '.,;:!?\"\'()[]{}<>'
+    while left < right and index_of(edge, slice(token, left, left + 1)) >= 0 {
+        left = left + 1
+    }
+    while right > left and index_of(edge, slice(token, right - 1, right)) >= 0 {
+        right = right - 1
+    }
+    return slice(token, left, right)
+}
+
+fn ext_insert_list(items, label) {
+    if len(items) is 0 {
+        message("No " + label + " found")
+        return
+    }
+    insert(join(items, "\n") + "\n")
+    message("Extracted " + str(len(items)) + " " + label)
+}
+
+fn ext_emails() {
+    let text = ext_source()
+    let found = []
+    let seen = {}
+    for token in words(text) {
+        let word = ext_trim_punct(token)
+        let at = index_of(word, "@")
+        if at > 0 and index_of(word, ".") > at + 1 {
+            if not has(seen, word) {
+                seen[word] = true
+                push(found, word)
+            }
+        }
+    }
+    ext_insert_list(found, "emails")
+}
+command_with_desc("Extract: emails", "Insert email-like addresses found in the selection or document", "ext_emails")
+
+fn ext_urls() {
+    let text = ext_source()
+    let found = []
+    let seen = {}
+    let i = 0
+    while i < len(text) {
+        let rest = slice(text, i, len(text))
+        let start = -1
+        let http = index_of(rest, "http://")
+        let https = index_of(rest, "https://")
+        if https >= 0 and (http < 0 or https < http) {
+            start = https
+        } else if http >= 0 {
+            start = http
+        } else {
+            break
+        }
+        let j = i + start
+        let end = j
+        while end < len(text) {
+            let c = slice(text, end, end + 1)
+            if ext_is_space(c) or c is "\"" or c is "'" or c is "<" or c is ">" or c is ")" or c is "]" {
+                break
+            }
+            end = end + 1
+        }
+        let url = ext_trim_punct(slice(text, j, end))
+        if url is not "" and not has(seen, url) {
+            seen[url] = true
+            push(found, url)
+        }
+        i = end
+        if i == j {
+            i = i + 1
+        }
+    }
+    ext_insert_list(found, "URLs")
+}
+command_with_desc("Extract: URLs", "Insert http(s) URLs found in the selection or document", "ext_urls")
+
+fn ext_numbers() {
+    let text = ext_source()
+    let found = []
+    let seen = {}
+    let i = 0
+    while i < len(text) {
+        let c = slice(text, i, i + 1)
+        let is_digit = index_of("0123456789", c) >= 0
+        let is_minus = c is "-" and i + 1 < len(text) and index_of("0123456789", slice(text, i + 1, i + 2)) >= 0
+        if is_digit or is_minus {
+            let j = i + 1
+            let dot = false
+            while j < len(text) {
+                let d = slice(text, j, j + 1)
+                if index_of("0123456789", d) >= 0 {
+                    j = j + 1
+                    continue
+                }
+                if d is "." and not dot and j + 1 < len(text) and index_of("0123456789", slice(text, j + 1, j + 2)) >= 0 {
+                    dot = true
+                    j = j + 1
+                    continue
+                }
+                break
+            }
+            let num = slice(text, i, j)
+            if not has(seen, num) {
+                seen[num] = true
+                push(found, num)
+            }
+            i = j
+            continue
+        }
+        i = i + 1
+    }
+    ext_insert_list(found, "numbers")
+}
+command_with_desc("Extract: numbers", "Insert numeric values found in the selection or document", "ext_numbers")
+
+fn ext_unique_lines() {
+    if not has_selection {
+        message("Select the lines to extract from first")
+        return
+    }
+    let found = []
+    let seen = {}
+    for line in lines(selected_text) {
+        let key = trim(line)
+        if key is "" {
+            continue
+        }
+        if not has(seen, key) {
+            seen[key] = true
+            push(found, line)
+        }
+    }
+    ext_insert_list(found, "unique lines")
+}
+command_with_desc("Extract: unique lines", "Insert one copy of each non-empty selected line", "ext_unique_lines")

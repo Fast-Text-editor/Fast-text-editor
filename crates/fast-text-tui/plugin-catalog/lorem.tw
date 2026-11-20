@@ -1,0 +1,41 @@
+# Lorem ipsum placeholder text for Fast Text — a TextWrite plugin.
+#
+# Inserts deterministic placeholder paragraphs and sentences at the caret.
+# Useful for drafting layouts, testing wrapping, and filling documents with
+# realistic-looking prose without leaving the editor.
+
+let lor_sentence = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."
+let lor_paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
+
+fn lor_insert_sentence() {
+    insert(lor_sentence + "\n")
+}
+command_with_desc("Lorem: sentence", "Insert one lorem ipsum sentence", "lor_insert_sentence")
+
+fn lor_insert_paragraph() {
+    insert(lor_paragraph + "\n")
+}
+command_with_desc("Lorem: paragraph", "Insert one lorem ipsum paragraph", "lor_insert_paragraph")
+
+fn lor_insert_three_paragraphs() {
+    let text = lor_paragraph + "\n\n" + lor_paragraph + "\n\n" + lor_paragraph + "\n"
+    insert(text)
+}
+command_with_desc("Lorem: three paragraphs", "Insert three lorem ipsum paragraphs", "lor_insert_three_paragraphs")
+
+fn lor_insert_title() {
+    insert("Lorem Ipsum\n")
+}
+command_with_desc("Lorem: title", "Insert a lorem ipsum title line", "lor_insert_title")
+
+fn lor_insert_list() {
+    let items = [
+        "- Lorem ipsum dolor sit amet",
+        "- Consectetur adipiscing elit",
+        "- Sed do eiusmod tempor incididunt",
+        "- Ut labore et dolore magna aliqua",
+        "- Ut enim ad minim veniam",
+    ]
+    insert(join(items, "\n") + "\n")
+}
+command_with_desc("Lorem: bullet list", "Insert a lorem ipsum bullet list", "lor_insert_list")

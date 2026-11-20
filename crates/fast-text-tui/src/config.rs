@@ -39,6 +39,14 @@ check_updates = true
 # list dot-files
 hidden = false
 
+[console]
+# Shell used by the terminal panel (Alt+C). "default" uses the system shell.
+# windows: "default", "cmd", "powershell", "pwsh", or a program path
+# linux/macos: "default" or a program path/name (e.g. "/bin/bash", "zsh")
+windows = "default"
+linux   = "default"
+macos   = "default"
+
 # Custom keybindings: "key" = "command".
 #
 # The command is either a built-in id (listed below) or any command from the
@@ -55,7 +63,8 @@ hidden = false
 #   find_in_files, document_symbols, rename_symbol, format_document,
 #   code_actions, toggle_comment, duplicate_line, delete_line, move_line_up,
 #   move_line_down, select_next_occurrence, record_macro, replay_macro,
-#   save_macro, check_updates
+#   save_macro, check_updates, console_shell_default,
+#   console_shell_cmd, console_shell_powershell, console_shell_pwsh
 #
 # A named macro can also be bound with the id "macro_<name>".
 [keys]
@@ -95,6 +104,12 @@ pub struct Config {
     pub vim: bool,
     /// Check GitHub for a newer release at startup.
     pub check_updates: bool,
+    /// Console shell preference for Windows (`default`, `cmd`, `powershell`, `pwsh`, or a path).
+    pub console_windows: String,
+    /// Console shell preference for Linux.
+    pub console_linux: String,
+    /// Console shell preference for macOS.
+    pub console_macos: String,
     /// `[keys]` bindings, in file order.
     pub keys: Vec<KeyBinding>,
     /// Problems found while loading; surfaced as a status message.
@@ -116,6 +131,9 @@ impl Default for Config {
             inline_diagnostics: true,
             vim: false,
             check_updates: true,
+            console_windows: "default".to_string(),
+            console_linux: "default".to_string(),
+            console_macos: "default".to_string(),
             keys: Vec::new(),
             warnings: Vec::new(),
             path: None,
@@ -277,6 +295,26 @@ impl Config {
                     .warnings
                     .push(format!("line {line_no}: unknown setting `sidebar.{key}`")),
             },
+            "console" => match key {
+                "windows" | "shell_windows" => {
+                    self.console_windows = normalize_console_shell(value);
+                }
+                "linux" | "shell_linux" => {
+                    self.console_linux = normalize_console_shell(value);
+                }
+                "macos" | "shell_macos" => {
+                    self.console_macos = normalize_console_shell(value);
+                }
+                "shell" => {
+                    let normalized = normalize_console_shell(value);
+                    self.console_windows = normalized.clone();
+                    self.console_linux = normalized.clone();
+                    self.console_macos = normalized;
+                }
+                _ => self
+                    .warnings
+                    .push(format!("line {line_no}: unknown setting `console.{key}`")),
+            },
             "keys" => match KeySpec::parse(key) {
                 None => self
                     .warnings
@@ -365,6 +403,146 @@ fn unquote(s: &str) -> String {
 /// True for a key that would swallow ordinary typing (a bare letter or space).
 fn is_typing_key(spec: KeySpec) -> bool {
     !spec.ctrl && !spec.alt && !spec.shift && matches!(spec.name, KeyName::Char(_) | KeyName::Space)
+}
+
+/// Normalizes a console shell setting to a non-empty value (`"default"` when blank).
+pub fn normalize_console_shell(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+impl Config {
+    /// The configured console shell for the current platform.
+    pub fn console_shell_for_current_os(&self) -> &str {
+        if cfg!(target_os = "windows") {
+            &self.console_windows
+        } else if cfg!(target_os = "macos") {
+            &self.console_macos
+        } else {
+            &self.console_linux
+        }
+    }
+
+    /// Sets the console shell for the current platform in-memory.
+    pub fn set_console_shell_for_current_os(&mut self, shell: &str) {
+        let shell = normalize_console_shell(shell);
+        if cfg!(target_os = "windows") {
+            self.console_windows = shell;
+        } else if cfg!(target_os = "macos") {
+            self.console_macos = shell;
+        } else {
+            self.console_linux = shell;
+        }
+    }
+
+    /// Updates or inserts `key = "value"` in `section` within a config file.
+    ///
+    /// The file is created from the template when missing. Returns the path
+    /// that was written to, or an error.
+    pub fn set_setting_in_file(
+        path: Option<PathBuf>,
+        section: &str,
+        key: &str,
+        value: &str,
+    ) -> std::io::Result<PathBuf> {
+        let path = path.or_else(Config::path).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "cannot locate a config path (HOME is unset)",
+            )
+        })?;
+        let mut text = if path.exists() {
+            std::fs::read_to_string(&path)?
+        } else {
+            TEMPLATE.to_string()
+        };
+        text = upsert_toml_setting(&text, section, key, value);
+        if let Some(dir) = path.parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)?;
+            }
+        }
+        std::fs::write(&path, text)?;
+        Ok(path)
+    }
+}
+
+/// Rewrites `text` so that `[section]` contains `key = "value"`.
+fn upsert_toml_setting(text: &str, section: &str, key: &str, value: &str) -> String {
+    let line = format!(
+        "{key} = \"{}\"",
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    let section_header = format!("[{section}]");
+    let mut in_section = false;
+    let mut section_start = None;
+    let mut section_end = lines.len();
+    let mut key_index = None;
+
+    for (i, raw) in lines.iter().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_section {
+                section_end = i;
+                break;
+            }
+            if trimmed.eq_ignore_ascii_case(&section_header) {
+                in_section = true;
+                section_start = Some(i);
+            }
+            continue;
+        }
+        if in_section {
+            if let Some((k, _)) = split_assignment(trimmed) {
+                if unquote(k.trim()).eq_ignore_ascii_case(key) {
+                    key_index = Some(i);
+                }
+            }
+        }
+    }
+    if in_section && key_index.is_none() && section_start.is_some() {
+        // section ran to EOF
+        section_end = lines.len();
+    }
+
+    if let Some(idx) = key_index {
+        lines[idx] = line;
+    } else if let Some(start) = section_start {
+        let insert_at = if section_end > start + 1 {
+            start + 1
+        } else {
+            section_end
+        };
+        // insert after header (and after any immediate comment block is fine; keep simple)
+        let mut at = insert_at;
+        // skip leading blank/comment lines right after header? keep near top of section
+        while at < section_end {
+            let t = lines[at].trim();
+            if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
+                at += 1;
+                continue;
+            }
+            break;
+        }
+        lines.insert(at, line);
+    } else {
+        if !lines.is_empty() && !lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+            lines.push(String::new());
+        }
+        lines.push(section_header);
+        lines.push(line);
+    }
+
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') || out.is_empty() {
+        out.push('\n');
+    }
+    out
 }
 
 #[cfg(test)]
@@ -510,5 +688,33 @@ mod tests {
         assert_eq!(c.keys.len(), 1);
         assert_eq!(c.keys[0].command, "quit");
         assert!(c.warnings.iter().any(|w| w.contains("bound twice")));
+    }
+
+    #[test]
+    fn reads_console_shell_settings() {
+        let c = Config::parse(
+            r#"
+            [console]
+            windows = "powershell"
+            linux = "/bin/bash"
+            macos = "zsh"
+            "#,
+        );
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        assert_eq!(c.console_windows, "powershell");
+        assert_eq!(c.console_linux, "/bin/bash");
+        assert_eq!(c.console_macos, "zsh");
+    }
+
+    #[test]
+    fn upsert_inserts_and_updates_console_setting() {
+        let text = "[editor]\ntheme = \"dark\"\n\n[console]\nwindows = \"default\"\n";
+        let updated = upsert_toml_setting(text, "console", "windows", "cmd");
+        assert!(updated.contains("windows = \"cmd\""));
+        assert!(!updated.contains("windows = \"default\""));
+        let inserted =
+            upsert_toml_setting("[editor]\ntheme = \"dark\"\n", "console", "windows", "cmd");
+        assert!(inserted.contains("[console]"));
+        assert!(inserted.contains("windows = \"cmd\""));
     }
 }

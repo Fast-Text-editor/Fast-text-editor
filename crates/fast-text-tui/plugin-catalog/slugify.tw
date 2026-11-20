@@ -1,0 +1,110 @@
+# Slug and filename-friendly text for Fast Text — a TextWrite plugin.
+#
+# Converts the selection into URL slugs and safe filename fragments: lower-case
+# words joined by a separator, with punctuation and extra spacing stripped.
+# Handy for headings, branches, note titles and web paths.
+
+fn slug_is_alnum(c) {
+    return index_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", c) >= 0
+}
+
+fn slug_words(text) {
+    let out = []
+    let cur = ""
+    for c in chars(text) {
+        if slug_is_alnum(c) {
+            cur = cur + lower(c)
+        } else {
+            if cur is not "" {
+                push(out, cur)
+                cur = ""
+            }
+        }
+    }
+    if cur is not "" {
+        push(out, cur)
+    }
+    return out
+}
+
+fn slug_source() {
+    if not has_selection {
+        message("Select the text to slugify first")
+        return ""
+    }
+    return selected_text
+}
+
+fn slug_apply(sep) {
+    let s = slug_source()
+    if s is "" {
+        return
+    }
+    let parts = slug_words(s)
+    if len(parts) is 0 {
+        message("No letters or digits to slugify")
+        return
+    }
+    delete_selection()
+    insert(join(parts, sep))
+}
+
+fn slug_hyphen() {
+    slug_apply("-")
+}
+command_with_desc("Slug: kebab-case (slug)", "Convert the selection to a lower-case hyphenated slug", "slug_hyphen")
+
+fn slug_underscore() {
+    slug_apply("_")
+}
+command_with_desc("Slug: snake slug", "Convert the selection to a lower-case underscore-separated slug", "slug_underscore")
+
+fn slug_dot() {
+    slug_apply(".")
+}
+command_with_desc("Slug: dot slug", "Convert the selection to a lower-case dot-separated slug", "slug_dot")
+
+fn slug_compact() {
+    let s = slug_source()
+    if s is "" {
+        return
+    }
+    let parts = slug_words(s)
+    if len(parts) is 0 {
+        message("No letters or digits to slugify")
+        return
+    }
+    delete_selection()
+    insert(join(parts, ""))
+}
+command_with_desc("Slug: compact", "Remove spaces and punctuation, keeping only letters and digits in lower case", "slug_compact")
+
+fn slug_filename() {
+    # Replace path-unsafe characters with hyphens and trim separators at edges.
+    let s = slug_source()
+    if s is "" {
+        return
+    }
+    let cleaned = []
+    for c in chars(s) {
+        if slug_is_alnum(c) or c is "-" or c is "_" or c is "." {
+            push(cleaned, lower(c))
+        } else {
+            push(cleaned, "-")
+        }
+    }
+    let out = join(cleaned, "")
+    while len(out) > 1 and (slice(out, 0, 1) is "-" or slice(out, 0, 1) is ".") {
+        out = slice(out, 1, len(out))
+    }
+    while len(out) > 1 and (slice(out, len(out) - 1, len(out)) is "-" or slice(out, len(out) - 1, len(out)) is ".") {
+        out = slice(out, 0, len(out) - 1)
+    }
+    if out is "" {
+        message("No safe filename characters found")
+        return
+    }
+    delete_selection()
+    insert(out)
+}
+command_with_desc("Slug: filename-safe", "Make the selection safe for use as a filename", "slug_filename")

@@ -40,6 +40,12 @@ highlight a plugin and press `Enter`.
 | `sql_case.tw` | Upper- or lower-case SQL keywords, leaving identifiers and strings alone |
 | `markdown_tables.tw` | Build an aligned Markdown table from TSV or CSV, or re-align a pipe table |
 | `log_summary.tw` | Count log lines by severity with a sample, or keep only ERROR lines |
+| `lorem.tw` | Insert placeholder sentences, paragraphs, lists and titles |
+| `slugify.tw` | Convert text to URL slugs and filename-safe fragments |
+| `escape.tw` | Escape, unescape and quote strings with JSON-style backslashes |
+| `extract.tw` | Extract emails, URLs, numbers and unique lines from text |
+| `number_base.tw` | Convert integers between decimal, hexadecimal and binary |
+| `checklist.tw` | Toggle Markdown checkboxes, add or remove bullets, and indent/outdent lines |
 
 ## Writing your own
 

@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 authors = ["Fast Text contributors"]
@@ -28,16 +28,16 @@ keywords = ["editor", "text-editor", "tui", "scripting", "terminal"]
 categories = ["command-line-utilities", "text-editors", "development-tools"]
 
 [workspace.dependencies]
-fast-text-core = { version = "0.5.1", path = "crates/fast-text-core" }
-fast-text-syntax = { version = "0.5.1", path = "crates/fast-text-syntax" }
+fast-text-core = { version = "0.6.0", path = "crates/fast-text-core" }
+fast-text-syntax = { version = "0.6.0", path = "crates/fast-text-syntax" }
 # The scripting engine is opt-in so targets that only need the shared keymap
 # (the WebAssembly build) do not link Rhai. Frontends enable `rhai` explicitly.
-fast-text-plugin = { version = "0.5.1", path = "crates/fast-text-plugin", default-features = false }
-fast-text-theme = { version = "0.5.1", path = "crates/fast-text-theme" }
-fast-text-lsp = { version = "0.5.1", path = "crates/fast-text-lsp" }
-fast-text-textwrite = { version = "0.5.1", path = "crates/fast-text-textwrite" }
-fast-text-update = { version = "0.5.1", path = "crates/fast-text-update" }
-textwrite = { version = "0.5.1", path = "crates/textwrite" }
+fast-text-plugin = { version = "0.6.0", path = "crates/fast-text-plugin", default-features = false }
+fast-text-theme = { version = "0.6.0", path = "crates/fast-text-theme" }
+fast-text-lsp = { version = "0.6.0", path = "crates/fast-text-lsp" }
+fast-text-textwrite = { version = "0.6.0", path = "crates/fast-text-textwrite" }
+fast-text-update = { version = "0.6.0", path = "crates/fast-text-update" }
+textwrite = { version = "0.6.0", path = "crates/textwrite" }
 
 ropey = "1.6"
 unicode-segmentation = "1.11"

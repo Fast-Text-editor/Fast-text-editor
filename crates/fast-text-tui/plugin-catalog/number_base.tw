@@ -1,0 +1,188 @@
+# Number base conversion for Fast Text — a TextWrite plugin.
+#
+# Converts an integer in the selection between decimal, hexadecimal and
+# binary. Prefixes 0x/0X and 0b/0B are recognised on input; output uses the
+# conventional prefix for the target base.
+
+fn nb_hex_digit_value(c) {
+    if c is "0" { return 0 }
+    if c is "1" { return 1 }
+    if c is "2" { return 2 }
+    if c is "3" { return 3 }
+    if c is "4" { return 4 }
+    if c is "5" { return 5 }
+    if c is "6" { return 6 }
+    if c is "7" { return 7 }
+    if c is "8" { return 8 }
+    if c is "9" { return 9 }
+    if c is "a" or c is "A" { return 10 }
+    if c is "b" or c is "B" { return 11 }
+    if c is "c" or c is "C" { return 12 }
+    if c is "d" or c is "D" { return 13 }
+    if c is "e" or c is "E" { return 14 }
+    if c is "f" or c is "F" { return 15 }
+    return -1
+}
+
+# Parses a decimal, 0x-hex or 0b-binary integer. Returns a map:
+# {"ok": true, "value": n} on success, or {"ok": false} on invalid input.
+fn nb_parse(text) {
+    let s = trim(text)
+    if s is "" {
+        return {"ok": false}
+    }
+    let sign = 1
+    if slice(s, 0, 1) is "-" {
+        sign = -1
+        s = slice(s, 1, len(s))
+    } else if slice(s, 0, 1) is "+" {
+        s = slice(s, 1, len(s))
+    }
+    if s is "" {
+        return {"ok": false}
+    }
+
+    if len(s) >= 2 and slice(s, 0, 1) is "0" and (slice(s, 1, 2) is "x" or slice(s, 1, 2) is "X") {
+        if len(s) is 2 {
+            return {"ok": false}
+        }
+        let value = 0
+        let i = 2
+        while i < len(s) {
+            let d = nb_hex_digit_value(slice(s, i, i + 1))
+            if d < 0 {
+                return {"ok": false}
+            }
+            value = value * 16 + d
+            i = i + 1
+        }
+        return {"ok": true, "value": sign * value}
+    }
+
+    if len(s) >= 2 and slice(s, 0, 1) is "0" and (slice(s, 1, 2) is "b" or slice(s, 1, 2) is "B") {
+        if len(s) is 2 {
+            return {"ok": false}
+        }
+        let value = 0
+        let i = 2
+        while i < len(s) {
+            let c = slice(s, i, i + 1)
+            if c is "0" {
+                value = value * 2
+            } else if c is "1" {
+                value = value * 2 + 1
+            } else {
+                return {"ok": false}
+            }
+            i = i + 1
+        }
+        return {"ok": true, "value": sign * value}
+    }
+
+    let value = 0
+    let i = 0
+    while i < len(s) {
+        let d = nb_hex_digit_value(slice(s, i, i + 1))
+        if d < 0 or d > 9 {
+            return {"ok": false}
+        }
+        value = value * 10 + d
+        i = i + 1
+    }
+    return {"ok": true, "value": sign * value}
+}
+
+fn nb_to_base(value, base, digits) {
+    let sign = ""
+    let n = value
+    if n < 0 {
+        sign = "-"
+        n = 0 - n
+    }
+    if n is 0 {
+        return sign + "0"
+    }
+    let out = []
+    while n > 0 {
+        let r = n % base
+        push(out, slice(digits, r, r + 1))
+        n = n / base
+    }
+    return sign + reverse(join(out, ""))
+}
+
+fn nb_read_selection() {
+    if not has_selection {
+        message("Select an integer value first")
+        return {"ok": false}
+    }
+    let parsed = nb_parse(selected_text)
+    if not parsed["ok"] {
+        message("Not a valid integer")
+        return {"ok": false}
+    }
+    return parsed
+}
+
+fn nb_to_hex() {
+    let parsed = nb_read_selection()
+    if not parsed["ok"] {
+        return
+    }
+    delete_selection()
+    insert("0x" + nb_to_base(parsed["value"], 16, "0123456789abcdef"))
+}
+command_with_desc("Number: to hex", "Convert the selected integer to hexadecimal (0x…)", "nb_to_hex")
+
+fn nb_to_bin() {
+    let parsed = nb_read_selection()
+    if not parsed["ok"] {
+        return
+    }
+    delete_selection()
+    insert("0b" + nb_to_base(parsed["value"], 2, "01"))
+}
+command_with_desc("Number: to binary", "Convert the selected integer to binary (0b…)", "nb_to_bin")
+
+fn nb_to_dec() {
+    let parsed = nb_read_selection()
+    if not parsed["ok"] {
+        return
+    }
+    delete_selection()
+    insert(str(parsed["value"]))
+}
+command_with_desc("Number: to decimal", "Convert the selected integer to decimal", "nb_to_dec")
+
+fn nb_show_all() {
+    let parsed = nb_read_selection()
+    if not parsed["ok"] {
+        return
+    }
+    let value = parsed["value"]
+    let report = "dec " + str(value) + "  hex 0x" + nb_to_base(value, 16, "0123456789abcdef") + "  bin 0b" + nb_to_base(value, 2, "01")
+    message(report)
+}
+command_with_desc("Number: show all bases", "Report the selected integer in decimal, hex and binary", "nb_show_all")
+
+fn nb_inc() {
+    let parsed = nb_read_selection()
+    if not parsed["ok"] {
+        return
+    }
+    let value = parsed["value"] + 1
+    delete_selection()
+    insert(str(value))
+}
+command_with_desc("Number: increment", "Add one to the selected integer", "nb_inc")
+
+fn nb_dec() {
+    let parsed = nb_read_selection()
+    if not parsed["ok"] {
+        return
+    }
+    let value = parsed["value"] - 1
+    delete_selection()
+    insert(str(value))
+}
+command_with_desc("Number: decrement", "Subtract one from the selected integer", "nb_dec")

@@ -5,7 +5,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Block, Borders, Clear, Gauge, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -1204,7 +1204,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         )),
     ];
 
-    let popup = centered_rect(60, 70, area);
+    let popup = centered_rect(72, 80, area);
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1214,6 +1214,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Paragraph::new(lines)
             .block(block)
             .alignment(Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: false })
             .style(
                 Style::default()
                     .bg(app.theme.status_bg)
@@ -1229,6 +1230,7 @@ fn draw_update_dialog(app: &mut App, frame: &mut Frame, area: Rect) {
     use crate::app::{UpdateButton, UpdateState};
 
     let version = env!("CARGO_PKG_VERSION");
+    let mut progress_fraction: Option<Option<f32>> = None;
     let (title, body, buttons): (
         String,
         Vec<Line<'static>>,
@@ -1256,15 +1258,22 @@ fn draw_update_dialog(app: &mut App, frame: &mut Frame, area: Rect) {
                 ("Not now", UpdateButton::No),
             ],
         ),
-        UpdateState::Installing { tag, progress } => (
-            format!(" Installing {tag} "),
-            vec![
-                Line::from(format!(" {progress}")),
-                Line::from(""),
-                Line::from(" Keep this window open until it finishes."),
-            ],
-            vec![],
-        ),
+        UpdateState::Installing {
+            tag,
+            message,
+            fraction,
+        } => {
+            progress_fraction = Some(fraction);
+            (
+                format!(" Installing {tag} "),
+                vec![
+                    Line::from(format!(" {message}")),
+                    Line::from(""),
+                    Line::from(" Keep this window open until it finishes."),
+                ],
+                vec![],
+            )
+        }
         UpdateState::ReadyToRestart { tag } => (
             " Update installed ".to_string(),
             vec![
@@ -1318,14 +1327,51 @@ fn draw_update_dialog(app: &mut App, frame: &mut Frame, area: Rect) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
 
-    frame.render_widget(
-        Paragraph::new(body).style(
-            Style::default()
-                .bg(app.theme.status_bg)
-                .fg(app.theme.foreground),
-        ),
-        rows[0],
-    );
+    if let Some(fraction) = progress_fraction {
+        let body_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(rows[0]);
+        frame.render_widget(
+            Paragraph::new(body).style(
+                Style::default()
+                    .bg(app.theme.status_bg)
+                    .fg(app.theme.foreground),
+            ),
+            body_rows[0],
+        );
+        if body_rows[1].height > 0 && body_rows[1].width > 0 {
+            let ratio = fraction.unwrap_or(0.0).clamp(0.0, 1.0) as f64;
+            let label = if let Some(f) = fraction {
+                format!("{}%", (f * 100.0).round() as u16)
+            } else {
+                "Working…".to_string()
+            };
+            let gauge = Gauge::default()
+                .gauge_style(
+                    Style::default()
+                        .fg(app.theme.status_accent)
+                        .bg(app.theme.background),
+                )
+                .ratio(ratio)
+                .label(Span::styled(
+                    label,
+                    Style::default()
+                        .fg(app.theme.foreground)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            frame.render_widget(gauge, body_rows[1]);
+        }
+    } else {
+        frame.render_widget(
+            Paragraph::new(body).style(
+                Style::default()
+                    .bg(app.theme.status_bg)
+                    .fg(app.theme.foreground),
+            ),
+            rows[0],
+        );
+    }
 
     // The button row is redrawn every frame; clicks hit-test against it.
     app.update_hits.clear();

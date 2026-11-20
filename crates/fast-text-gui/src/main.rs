@@ -248,7 +248,9 @@ enum UpdateState {
         /// The release tag being installed.
         tag: String,
         /// Short progress text.
-        progress: String,
+        message: String,
+        /// Completion fraction for the progress bar.
+        fraction: Option<f32>,
     },
     /// Installed; a restart is needed.
     ReadyToRestart(String),
@@ -276,7 +278,10 @@ enum UpdateEvent {
         result: Result<Option<Release>, String>,
     },
     /// A short progress note while installing.
-    Progress(String),
+    Progress {
+        message: String,
+        fraction: Option<f32>,
+    },
     /// The install finished (or did not).
     Installed {
         /// The release tag that was being installed.
@@ -438,13 +443,17 @@ impl App {
     fn begin_update_install(&mut self, tag: String) {
         self.update = UpdateState::Installing {
             tag: tag.clone(),
-            progress: "Starting…".into(),
+            message: "Starting…".into(),
+            fraction: Some(0.02),
         };
         if let Some(tx) = self.update_tx.clone() {
             let progress = tx.clone();
             std::thread::spawn(move || {
-                let result = fast_text_update::download_and_install(&tag, &mut |message| {
-                    let _ = progress.send(UpdateEvent::Progress(message.to_string()));
+                let result = fast_text_update::download_and_install(&tag, &mut |p| {
+                    let _ = progress.send(UpdateEvent::Progress {
+                        message: p.message,
+                        fraction: p.fraction,
+                    });
                 });
                 let _ = tx.send(UpdateEvent::Installed { tag, result });
             });
@@ -504,11 +513,12 @@ impl App {
                     self.update = UpdateState::Idle;
                 }
             },
-            UpdateEvent::Progress(message) => {
+            UpdateEvent::Progress { message, fraction } => {
                 if let UpdateState::Installing { tag, .. } = &self.update {
                     self.update = UpdateState::Installing {
                         tag: tag.clone(),
-                        progress: message,
+                        message,
+                        fraction,
                     };
                 }
             }
@@ -556,12 +566,26 @@ impl App {
                         });
                     });
             }
-            UpdateState::Installing { tag, progress } => {
+            UpdateState::Installing {
+                tag,
+                message,
+                fraction,
+            } => {
                 egui::Window::new(format!("Installing {tag}"))
                     .collapsible(false)
                     .resizable(false)
                     .show(ctx, |ui| {
-                        ui.label(progress);
+                        ui.label(message);
+                        let progress = fraction.unwrap_or(0.0).clamp(0.0, 1.0);
+                        let text = if let Some(f) = fraction {
+                            format!("{}%", (f * 100.0).round() as u16)
+                        } else {
+                            "Working…".to_string()
+                        };
+                        let bar = egui::ProgressBar::new(progress)
+                            .text(text)
+                            .animate(fraction.is_none());
+                        ui.add(bar);
                         ui.label("Keep this window open until it finishes.");
                     });
             }

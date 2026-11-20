@@ -575,7 +575,7 @@ enum PickerKind {
 }
 
 /// What the self-update dialog is currently showing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UpdateState {
     /// Nothing to show.
     Idle,
@@ -591,7 +591,9 @@ pub enum UpdateState {
         /// The release tag being installed.
         tag: String,
         /// Short progress text for the dialog.
-        progress: String,
+        message: String,
+        /// Completion fraction for the dialog progress bar.
+        fraction: Option<f32>,
     },
     /// Installed; the dialog offers a restart.
     ReadyToRestart {
@@ -639,7 +641,10 @@ enum UpdateEvent {
         result: Result<Option<Release>, String>,
     },
     /// A short progress note while installing.
-    Progress(String),
+    Progress {
+        message: String,
+        fraction: Option<f32>,
+    },
     /// The install finished (or did not).
     Installed {
         /// The release tag that was being installed.
@@ -814,6 +819,12 @@ pub struct App {
     pub terminal_error: Option<String>,
     /// Console panel rectangle from the last draw, used by mouse scrolling.
     pub console_area: Option<Rect>,
+    /// Preferred console shell on Windows (`default`, `cmd`, `powershell`, `pwsh`, or a path).
+    pub console_shell_windows: String,
+    /// Preferred console shell on Linux.
+    pub console_shell_linux: String,
+    /// Preferred console shell on macOS.
+    pub console_shell_macos: String,
     /// Actions scheduled for future frames by a timed automation.
     pending: VecDeque<(Instant, EditorAction)>,
     /// Sorted names of every selectable language (curated + imported).
@@ -997,22 +1008,21 @@ impl App {
                 concat!(
                     "// Welcome to Fast Text\n",
                     "//\n",
-                    "// Alt+H help     Ctrl+S save\n",
-                    "// Ctrl+O open    Ctrl+Q quit\n",
-                    "// Ctrl+P files   Ctrl+Shift+P\n",
-                    "// Ctrl+L lang    Ctrl+T theme\n",
-                    "// Alt+R scripts  Alt+C term\n",
+                    "// Alt+H help   Ctrl+S save\n",
+                    "// Ctrl+O open  Ctrl+Q quit\n",
+                    "// Ctrl+P files Ctrl+Shift+P\n",
+                    "// Ctrl+L lang  Ctrl+T theme\n",
+                    "// Alt+R run    Alt+C term\n",
                     "//\n",
                     "// Ctrl+B explorer\n",
-                    "// Ctrl+Shift+O pick folder\n",
-                    "// Explorer: n/N file/folder\n",
-                    "// Alt+V Vim   Alt+: bar\n",
-                    "// Ctrl+arrows switch panes\n",
-                    "// Click file/tab/X to open\n",
+                    "// Ctrl+Shift+O folder\n",
+                    "// n/N file/folder\n",
+                    "// Alt+V Vim    Alt+: bar\n",
+                    "// Ctrl+arrows: panes\n",
+                    "// Click tab/X to open\n",
                     "//\n",
-                    "// Config: ~/.config/fast-text/\n",
-                    "//   config.toml\n",
-                    "// (Ctrl+Shift+P -> Open config)\n",
+                    "// Config: config.toml\n",
+                    "// Palette: Open config\n",
                     "\n",
                     "fn main() {\n",
                     "    println!(\"Hello, world!\");\n",
@@ -1081,6 +1091,9 @@ impl App {
             terminal_scroll: 0,
             terminal_error: None,
             console_area: None,
+            console_shell_windows: "default".to_string(),
+            console_shell_linux: "default".to_string(),
+            console_shell_macos: "default".to_string(),
             language_names: all_language_names(),
             pending: VecDeque::new(),
             sidebar,
@@ -1135,7 +1148,7 @@ impl App {
         }
         let (cols, rows) = console_ppty_size(self.terminal_size);
         if self.shell.is_none() && self.terminal_error.is_none() {
-            match ShellSession::spawn(cols, rows, &self.console_cwd) {
+            match ShellSession::spawn(cols, rows, &self.console_cwd, self.console_shell_pref()) {
                 Ok(session) => self.shell = Some(session),
                 Err(error) => {
                     self.console_output
@@ -1462,10 +1475,30 @@ impl App {
             self.sidebar.hide();
         }
         self.sidebar.set_show_hidden(config.show_hidden);
+        let old_shell_pref = self.console_shell_pref().to_string();
+        self.console_shell_windows = config.console_windows;
+        self.console_shell_linux = config.console_linux;
+        self.console_shell_macos = config.console_macos;
+        if old_shell_pref != self.console_shell_pref() {
+            // Apply the new shell choice on the next terminal open.
+            self.shell = None;
+            self.terminal_error = None;
+        }
         self.keybindings = key_map;
         self.config_path = config.path.clone();
         self.update_checks_enabled = config.check_updates && env_update_checks_enabled();
         warnings
+    }
+
+    /// The configured console shell for the current platform.
+    pub fn console_shell_pref(&self) -> &str {
+        if cfg!(target_os = "windows") {
+            &self.console_shell_windows
+        } else if cfg!(target_os = "macos") {
+            &self.console_shell_macos
+        } else {
+            &self.console_shell_linux
+        }
     }
 
     pub fn editor(&self) -> &Editor {
@@ -1766,6 +1799,21 @@ impl App {
                     }
                     return true;
                 }
+                if let Some(rest) = title.strip_prefix("Console shell: ") {
+                    let shell = if rest.starts_with("Default") {
+                        "default"
+                    } else if rest.contains("(cmd)") || rest.eq_ignore_ascii_case("cmd") {
+                        "cmd"
+                    } else if rest.contains("PowerShell 7") || rest.contains("(pwsh)") {
+                        "pwsh"
+                    } else if rest.contains("PowerShell") {
+                        "powershell"
+                    } else {
+                        rest.trim()
+                    };
+                    self.set_console_shell(shell);
+                    return true;
+                }
                 false
             }
         }
@@ -1909,6 +1957,18 @@ impl App {
                 }
             }
             "check_updates" | "check_for_updates" | "update_check" => self.begin_update_check(true),
+            "console_shell_default" | "set_console_shell_default" => {
+                self.set_console_shell("default")
+            }
+            "console_shell_cmd" | "set_console_shell_cmd" => self.set_console_shell("cmd"),
+            "console_shell_powershell" | "set_console_shell_powershell" => {
+                self.set_console_shell("powershell")
+            }
+            "console_shell_pwsh" | "set_console_shell_pwsh" => self.set_console_shell("pwsh"),
+            "console_shell_bash" | "set_console_shell_bash" => self.set_console_shell("bash"),
+            "console_shell_zsh" | "set_console_shell_zsh" => self.set_console_shell("zsh"),
+            "console_shell_fish" | "set_console_shell_fish" => self.set_console_shell("fish"),
+            "console_shell_sh" | "set_console_shell_sh" => self.set_console_shell("sh"),
             "install_language_server" | "install_lsp" => {
                 let language = self.editor().language;
                 self.offer_lsp_install(language);
@@ -2111,7 +2171,8 @@ impl App {
     fn begin_update_install(&mut self, tag: String) {
         self.update = UpdateState::Installing {
             tag: tag.clone(),
-            progress: "Starting…".into(),
+            message: "Starting…".into(),
+            fraction: Some(0.02),
         };
         let Some(tx) = self.update_sender() else {
             self.update = UpdateState::Failed {
@@ -2122,8 +2183,11 @@ impl App {
         };
         spawn_worker(move || {
             let progress_tx = tx.clone();
-            let result = fast_text_update::download_and_install(&tag, &mut |message| {
-                let _ = progress_tx.send(UpdateEvent::Progress(message.to_string()));
+            let result = fast_text_update::download_and_install(&tag, &mut |progress| {
+                let _ = progress_tx.send(UpdateEvent::Progress {
+                    message: progress.message,
+                    fraction: progress.fraction,
+                });
             });
             let _ = tx.send(UpdateEvent::Installed { tag, result });
         });
@@ -2208,11 +2272,12 @@ impl App {
                     self.update = UpdateState::Idle;
                 }
             },
-            UpdateEvent::Progress(message) => {
+            UpdateEvent::Progress { message, fraction } => {
                 if let UpdateState::Installing { tag, .. } = &self.update {
                     self.update = UpdateState::Installing {
                         tag: tag.clone(),
-                        progress: message,
+                        message,
+                        fraction,
                     };
                 }
             }
@@ -2279,6 +2344,7 @@ impl App {
     pub fn command_titles(&self) -> Vec<String> {
         let mut titles: Vec<String> = BUILTIN_COMMANDS.iter().map(|s| s.to_string()).collect();
         titles.extend(self.theme_titles());
+        titles.extend(self.console_shell_titles());
         titles.extend(self.plugins.command_titles());
         titles.extend(self.scripts.command_titles());
         titles.extend(self.macro_command_titles());
@@ -3103,6 +3169,64 @@ impl App {
             titles.push(format!("Theme: {name}"));
         }
         titles
+    }
+
+    /// Console shell choices for the current platform, shown in the palette.
+    pub fn console_shell_titles(&self) -> Vec<String> {
+        if cfg!(target_os = "windows") {
+            vec![
+                "Console shell: Default (Windows)".to_string(),
+                "Console shell: Command Prompt (cmd)".to_string(),
+                "Console shell: Windows PowerShell".to_string(),
+                "Console shell: PowerShell 7 (pwsh)".to_string(),
+            ]
+        } else if cfg!(target_os = "macos") {
+            vec![
+                "Console shell: Default (macOS, $SHELL)".to_string(),
+                "Console shell: zsh".to_string(),
+                "Console shell: bash".to_string(),
+                "Console shell: fish".to_string(),
+            ]
+        } else {
+            vec![
+                "Console shell: Default (Linux, $SHELL)".to_string(),
+                "Console shell: bash".to_string(),
+                "Console shell: zsh".to_string(),
+                "Console shell: fish".to_string(),
+                "Console shell: sh".to_string(),
+            ]
+        }
+    }
+
+    /// Applies and persists a console shell choice for the current platform.
+    pub fn set_console_shell(&mut self, shell: &str) {
+        let shell = crate::config::normalize_console_shell(shell);
+        let path = self.config_path.clone().or_else(Config::path);
+        let key = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
+        match Config::set_setting_in_file(path.clone(), "console", key, &shell) {
+            Ok(saved) => {
+                self.config_path = Some(saved);
+                if cfg!(target_os = "windows") {
+                    self.console_shell_windows = shell.clone();
+                } else if cfg!(target_os = "macos") {
+                    self.console_shell_macos = shell.clone();
+                } else {
+                    self.console_shell_linux = shell.clone();
+                }
+                self.shell = None;
+                self.terminal_error = None;
+                self.set_message(format!(
+                    "Console shell set to {shell} (applies when the terminal opens)"
+                ));
+            }
+            Err(error) => self.set_error(format!("Cannot save console shell: {error}")),
+        }
     }
 
     // --- Buffer management -------------------------------------------------
@@ -6547,9 +6671,17 @@ mod tests {
         app.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(app.update, UpdateState::Installing { .. }));
 
-        app.apply_update_event(UpdateEvent::Progress("Unpacking…".to_string()));
+        app.apply_update_event(UpdateEvent::Progress {
+            message: "Unpacking…".to_string(),
+            fraction: Some(0.72),
+        });
         match &app.update {
-            UpdateState::Installing { progress, .. } => assert_eq!(progress, "Unpacking…"),
+            UpdateState::Installing {
+                message, fraction, ..
+            } => {
+                assert_eq!(message, "Unpacking…");
+                assert_eq!(*fraction, Some(0.72));
+            }
             other => panic!("unexpected state: {other:?}"),
         }
 

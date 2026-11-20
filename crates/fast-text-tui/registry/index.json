@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-19",
+  "updated": "2026-11-20",
   "plugins": [
     {
       "name": "themes",
@@ -183,6 +183,48 @@
       "title": "Log summary",
       "tags": ["log", "report", "analysis"],
       "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/log_summary.tw"
+    },
+    {
+      "name": "lorem",
+      "file": "lorem.tw",
+      "title": "Lorem ipsum",
+      "tags": ["insert", "writing", "placeholder"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/lorem.tw"
+    },
+    {
+      "name": "slugify",
+      "file": "slugify.tw",
+      "title": "Slugify",
+      "tags": ["text", "slug", "path"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/slugify.tw"
+    },
+    {
+      "name": "escape",
+      "file": "escape.tw",
+      "title": "Escape tools",
+      "tags": ["text", "escape", "json", "code"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/escape.tw"
+    },
+    {
+      "name": "extract",
+      "file": "extract.tw",
+      "title": "Extract",
+      "tags": ["text", "extract", "search"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/extract.tw"
+    },
+    {
+      "name": "number-base",
+      "file": "number_base.tw",
+      "title": "Number base",
+      "tags": ["number", "convert", "dev"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/number_base.tw"
+    },
+    {
+      "name": "checklist",
+      "file": "checklist.tw",
+      "title": "Checklist",
+      "tags": ["markdown", "list", "todo"],
+      "url": "https://raw.githubusercontent.com/Fast-Text-editor/Fast-text-editor/main/crates/fast-text-tui/plugin-catalog/checklist.tw"
     }
   ]
 }

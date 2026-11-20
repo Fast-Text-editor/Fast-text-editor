@@ -1,0 +1,186 @@
+# Checklist and list helpers for Fast Text — a TextWrite plugin.
+#
+# Toggles Markdown checkboxes, adds or removes bullets, and indents or outdents
+# list items. Designed to work on the selected lines so you can batch-edit task
+# lists and notes.
+
+fn chk_is_checked(line) {
+    let t = trim(line)
+    return starts_with(t, "- [x]") or starts_with(t, "- [X]") or starts_with(t, "* [x]") or starts_with(t, "* [X]")
+}
+
+fn chk_is_unchecked(line) {
+    let t = trim(line)
+    return starts_with(t, "- [ ]") or starts_with(t, "* [ ]")
+}
+
+fn chk_replace_prefix(line, old, new) {
+    let at = index_of(line, old)
+    if at < 0 {
+        return line
+    }
+    return slice(line, 0, at) + new + slice(line, at + len(old), len(line))
+}
+
+fn chk_require_selection() {
+    if not has_selection {
+        message("Select the lines to edit first")
+        return false
+    }
+    return true
+}
+
+fn chk_toggle() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        if chk_is_checked(line) {
+            let next = chk_replace_prefix(line, "- [x]", "- [ ]")
+            next = chk_replace_prefix(next, "- [X]", "- [ ]")
+            next = chk_replace_prefix(next, "* [x]", "* [ ]")
+            next = chk_replace_prefix(next, "* [X]", "* [ ]")
+            push(out, next)
+        } else if chk_is_unchecked(line) {
+            let next = chk_replace_prefix(line, "- [ ]", "- [x]")
+            next = chk_replace_prefix(next, "* [ ]", "* [x]")
+            push(out, next)
+        } else if trim(line) is "" {
+            push(out, line)
+        } else {
+            push(out, "- [ ] " + line)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: toggle", "Toggle [ ] / [x] checkboxes on the selected lines, adding them when missing", "chk_toggle")
+
+fn chk_check_all() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        if chk_is_unchecked(line) {
+            let next = chk_replace_prefix(line, "- [ ]", "- [x]")
+            next = chk_replace_prefix(next, "* [ ]", "* [x]")
+            push(out, next)
+        } else {
+            push(out, line)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: check all", "Mark every unchecked box in the selection as done", "chk_check_all")
+
+fn chk_uncheck_all() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        if chk_is_checked(line) {
+            let next = chk_replace_prefix(line, "- [x]", "- [ ]")
+            next = chk_replace_prefix(next, "- [X]", "- [ ]")
+            next = chk_replace_prefix(next, "* [x]", "* [ ]")
+            next = chk_replace_prefix(next, "* [X]", "* [ ]")
+            push(out, next)
+        } else {
+            push(out, line)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: uncheck all", "Clear every checked box in the selection", "chk_uncheck_all")
+
+fn chk_bullet() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        let t = trim(line)
+        if t is "" {
+            push(out, line)
+        } else if starts_with(t, "- ") or starts_with(t, "* ") or starts_with(t, "+ ") {
+            push(out, line)
+        } else {
+            push(out, "- " + line)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: add bullets", "Prefix selected non-empty lines with '- ' when they are not already bulleted", "chk_bullet")
+
+fn chk_unbullet() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        let t = trim(line)
+        if starts_with(t, "- [ ] ") {
+            push(out, chk_replace_prefix(line, "- [ ] ", ""))
+        } else if starts_with(t, "- [x] ") {
+            push(out, chk_replace_prefix(line, "- [x] ", ""))
+        } else if starts_with(t, "- [X] ") {
+            push(out, chk_replace_prefix(line, "- [X] ", ""))
+        } else if starts_with(t, "* [ ] ") {
+            push(out, chk_replace_prefix(line, "* [ ] ", ""))
+        } else if starts_with(t, "* [x] ") {
+            push(out, chk_replace_prefix(line, "* [x] ", ""))
+        } else if starts_with(t, "* [X] ") {
+            push(out, chk_replace_prefix(line, "* [X] ", ""))
+        } else if starts_with(t, "- ") {
+            push(out, chk_replace_prefix(line, "- ", ""))
+        } else if starts_with(t, "* ") {
+            push(out, chk_replace_prefix(line, "* ", ""))
+        } else if starts_with(t, "+ ") {
+            push(out, chk_replace_prefix(line, "+ ", ""))
+        } else {
+            push(out, line)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: remove bullets", "Remove leading bullet and checkbox markers from the selected lines", "chk_unbullet")
+
+fn chk_indent() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        push(out, "  " + line)
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: indent lines", "Indent each selected line by two spaces", "chk_indent")
+
+fn chk_outdent() {
+    if not chk_require_selection() {
+        return
+    }
+    let out = []
+    for line in lines(selected_text) {
+        if starts_with(line, "  ") {
+            push(out, slice(line, 2, len(line)))
+        } else if starts_with(line, "\t") {
+            push(out, slice(line, 1, len(line)))
+        } else if starts_with(line, " ") {
+            push(out, slice(line, 1, len(line)))
+        } else {
+            push(out, line)
+        }
+    }
+    delete_selection()
+    insert(join(out, "\n"))
+}
+command_with_desc("Checklist: outdent lines", "Remove up to two leading spaces or one tab from each selected line", "chk_outdent")

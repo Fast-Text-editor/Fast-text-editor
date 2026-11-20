@@ -126,14 +126,23 @@ fn extract_tag_name(json: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// Progress reported while downloading and installing an update.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstallProgress {
+    /// Short human-readable status for the dialog.
+    pub message: String,
+    /// Completion fraction in the range `0.0..=1.0`, or `None` when unknown.
+    pub fraction: Option<f32>,
+}
+
 /// Downloads the release archive for `tag` and swaps the binaries next to the
 /// running executable. Returns the names of the executables it replaced.
 ///
-/// `on_progress` receives short human-readable updates ("Downloading…",
-/// "Unpacking…", "Installing…") that frontends show in their dialog.
+/// `on_progress` receives human-readable updates and an optional completion
+/// fraction that frontends can render as a progress bar.
 pub fn download_and_install(
     tag: &str,
-    on_progress: &mut dyn Fn(&str),
+    on_progress: &mut dyn FnMut(InstallProgress),
 ) -> Result<Vec<String>, String> {
     let target = target_triple().ok_or_else(|| {
         format!(
@@ -149,7 +158,10 @@ pub fn download_and_install(
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
 
-    on_progress(&format!("Downloading {asset}…"));
+    on_progress(InstallProgress {
+        message: format!("Downloading {asset}…"),
+        fraction: Some(0.08),
+    });
     let archive = dir.join(&asset);
     let code = http_get(&url, 600, &archive)?;
     if code != 200 {
@@ -161,13 +173,19 @@ pub fn download_and_install(
         });
     }
 
-    on_progress("Unpacking…");
+    on_progress(InstallProgress {
+        message: "Unpacking…".to_string(),
+        fraction: Some(0.72),
+    });
     let unpacked = dir.join("unpacked");
     std::fs::create_dir_all(&unpacked).map_err(|e| format!("cannot unpack: {e}"))?;
     unpack(&archive, &unpacked)?;
     let binaries = find_binaries(&unpacked, target)?;
 
-    on_progress("Installing…");
+    on_progress(InstallProgress {
+        message: "Installing…".to_string(),
+        fraction: Some(0.92),
+    });
     let exe =
         std::env::current_exe().map_err(|e| format!("cannot find the running program: {e}"))?;
     let install_dir = exe

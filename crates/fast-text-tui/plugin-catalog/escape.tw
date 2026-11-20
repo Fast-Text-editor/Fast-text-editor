@@ -1,0 +1,131 @@
+# String escape and unescape for Fast Text — a TextWrite plugin.
+#
+# Escapes or unescapes the selection using common JSON/string conventions:
+# backslash, double quote, newline, carriage return and tab. Useful when
+# embedding text inside string literals, JSON payloads or log messages.
+
+fn esc_escape() {
+    if not has_selection {
+        message("Select the text to escape first")
+        return
+    }
+    let out = []
+    for c in chars(selected_text) {
+        if c is "\\" {
+            push(out, "\\\\")
+        } else if c is "\"" {
+            push(out, "\\\"")
+        } else if c is "\n" {
+            push(out, "\\n")
+        } else if c is "\r" {
+            push(out, "\\r")
+        } else if c is "\t" {
+            push(out, "\\t")
+        } else {
+            push(out, c)
+        }
+    }
+    delete_selection()
+    insert(join(out, ""))
+}
+command_with_desc("Escape: JSON/string escape", "Escape backslashes, quotes and control characters in the selection", "esc_escape")
+
+fn esc_unescape() {
+    if not has_selection {
+        message("Select the text to unescape first")
+        return
+    }
+    let text = selected_text
+    let out = []
+    let i = 0
+    while i < len(text) {
+        let c = slice(text, i, i + 1)
+        if c is "\\" and i + 1 < len(text) {
+            let n = slice(text, i + 1, i + 2)
+            if n is "n" {
+                push(out, "\n")
+                i = i + 2
+                continue
+            } else if n is "r" {
+                push(out, "\r")
+                i = i + 2
+                continue
+            } else if n is "t" {
+                push(out, "\t")
+                i = i + 2
+                continue
+            } else if n is "\"" {
+                push(out, "\"")
+                i = i + 2
+                continue
+            } else if n is "\\" {
+                push(out, "\\")
+                i = i + 2
+                continue
+            } else {
+                # Unknown escape: keep the character after the backslash.
+                push(out, n)
+                i = i + 2
+                continue
+            }
+        }
+        push(out, c)
+        i = i + 1
+    }
+    delete_selection()
+    insert(join(out, ""))
+}
+command_with_desc("Escape: JSON/string unescape", "Interpret common backslash escapes in the selection", "esc_unescape")
+
+fn esc_quote() {
+    if not has_selection {
+        message("Select the text to quote first")
+        return
+    }
+    let text = selected_text
+    delete_selection()
+    insert("\"" + replace(replace(replace(text, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n") + "\"")
+}
+command_with_desc("Escape: quote as string", "Wrap the selection in quotes and escape it as a JSON string", "esc_quote")
+
+fn esc_unquote() {
+    if not has_selection {
+        message("Select a quoted string to unquote first")
+        return
+    }
+    let text = trim(selected_text)
+    if len(text) >= 2 and slice(text, 0, 1) is "\"" and slice(text, len(text) - 1, len(text)) is "\"" {
+        let inner = slice(text, 1, len(text) - 1)
+        # Unescape the contents in place.
+        let out = []
+        let i = 0
+        while i < len(inner) {
+            let c = slice(inner, i, i + 1)
+            if c is "\\" and i + 1 < len(inner) {
+                let n = slice(inner, i + 1, i + 2)
+                if n is "n" {
+                    push(out, "\n")
+                } else if n is "r" {
+                    push(out, "\r")
+                } else if n is "t" {
+                    push(out, "\t")
+                } else if n is "\"" {
+                    push(out, "\"")
+                } else if n is "\\" {
+                    push(out, "\\")
+                } else {
+                    push(out, n)
+                }
+                i = i + 2
+                continue
+            }
+            push(out, c)
+            i = i + 1
+        }
+        delete_selection()
+        insert(join(out, ""))
+        return
+    }
+    message("Selection is not wrapped in double quotes")
+}
+command_with_desc("Escape: unquote string", "Remove surrounding double quotes and unescape the contents", "esc_unquote")
