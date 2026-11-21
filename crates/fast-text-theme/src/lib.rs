@@ -23,7 +23,7 @@
 //! the colors it wants to change. Unknown keys are reported as warnings rather
 //! than errors, which keeps old themes loading after the schema grows.
 //!
-//! The ten built-in themes are themselves TOML files compiled into the crate
+//! The eleven built-in themes are themselves TOML files compiled into the crate
 //! (`themes/*.toml`), so the frontends share exactly one definition of each
 //! palette. User themes live in `~/.config/fast-text/themes/*.toml` (see
 //! [`Theme::load_dir`]).
@@ -43,6 +43,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "tokyo-night",
     "solarized-dark",
     "solarized-light",
+    "gojo",
 ];
 
 /// Every color key the schema understands, in documentation order.
@@ -93,6 +94,7 @@ const BUILTINS: &[(&str, &str)] = &[
         "solarized-light",
         include_str!("../themes/solarized-light.toml"),
     ),
+    ("gojo", include_str!("../themes/gojo.toml")),
 ];
 
 /// An 8-bit RGB color.
@@ -698,7 +700,7 @@ mod tests {
 
     #[test]
     fn every_builtin_parses() {
-        assert_eq!(Theme::names().len(), 10);
+        assert_eq!(Theme::names().len(), 11);
         for name in Theme::names() {
             let theme = Theme::builtin(name).unwrap_or_else(|| panic!("{name} missing"));
             assert_eq!(theme.name, *name);
@@ -715,7 +717,7 @@ mod tests {
         }
         backgrounds.sort_by_key(|c| c.to_u32());
         backgrounds.dedup();
-        assert_eq!(backgrounds.len(), 10);
+        assert_eq!(backgrounds.len(), 11);
     }
 
     #[test]

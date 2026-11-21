@@ -4,6 +4,16 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-21
+
+### Added
+
+- **Rusk syntax highlighting**: `.rk` files are now recognized as Rusk and get
+  built-in highlighting for Rusk keywords, types, constants, `#` comments, and
+  string escapes through the shared `fast-text-syntax` highlighter.
+- **Gojo built-in theme**: a new dark `gojo` theme inspired by Gojo Satoru,
+  available across the TUI, GUI, and shared theme schema.
+
 ## [0.6.0] - 2026-11-20
 
 ### Added

@@ -362,7 +362,7 @@ impl App {
         app
     }
 
-    /// Every selectable theme: the ten built-ins then user themes.
+    /// Every selectable theme: the built-ins then user themes.
     fn themes(&self) -> Vec<(String, Theme)> {
         let mut themes: Vec<(String, Theme)> = Theme::names()
             .iter()

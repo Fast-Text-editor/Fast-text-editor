@@ -20,7 +20,7 @@ pub const TEMPLATE: &str = r#"# Fast Text configuration
 # bar | block | underline
 cursor_style = "bar"
 # dark | light | one-dark | monokai | dracula | nord | gruvbox
-# | tokyo-night | solarized-dark | solarized-light
+# | tokyo-night | solarized-dark | solarized-light | gojo
 # (a plugin can define more names with define_theme)
 theme        = "dark"
 # start with the folder explorer visible

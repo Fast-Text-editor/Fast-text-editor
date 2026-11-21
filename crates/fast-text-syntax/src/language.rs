@@ -81,6 +81,7 @@ impl LanguageId {
     pub const Html: LanguageId = LanguageId(&HTML);
     pub const Css: LanguageId = LanguageId(&CSS);
     pub const TextWrite: LanguageId = LanguageId(&TEXTWRITE);
+    pub const Rusk: LanguageId = LanguageId(&RUSK);
 
     /// Detects a language from a file name / path.
     pub fn from_path(path: &str) -> Self {
@@ -131,6 +132,7 @@ impl LanguageId {
             "html" | "htm" => Self::Html,
             "css" => Self::Css,
             "tw" => Self::TextWrite,
+            "rk" => Self::Rusk,
             other => match crate::generated::language_for_extension(other) {
                 Some(lang) => LanguageId(lang),
                 None => Self::Plain,
@@ -158,6 +160,7 @@ impl LanguageId {
             "html" => Self::Html,
             "css" => Self::Css,
             "textwrite" | "tw" => Self::TextWrite,
+            "rusk" | "rk" => Self::Rusk,
             "plain" | "text" | "plaintext" => Self::Plain,
             other => match crate::generated::language_for_name(other) {
                 Some(lang) => LanguageId(lang),
@@ -216,6 +219,7 @@ pub static CURATED_LANGUAGES: &[LanguageId] = &[
     LanguageId::Html,
     LanguageId::Css,
     LanguageId::TextWrite,
+    LanguageId::Rusk,
 ];
 
 /// Every selectable language name (curated plus imported), sorted and unique.
@@ -260,6 +264,107 @@ static TEXTWRITE: Language = Language {
     line_comment: &["#", "//"],
     block_comment: Some(("/*", "*/")),
     string_delims: &["\"", "'"],
+    triple_strings: &[],
+    attribute_prefix: None,
+    string_escapes: true,
+    lsp_servers: &[],
+};
+
+static RUSK: Language = Language {
+    name: "Rusk",
+    language_id: "rusk",
+    extensions: &["rk"],
+    keywords: &[
+        "let",
+        "be",
+        "set",
+        "to",
+        "say",
+        "if",
+        "otherwise",
+        "repeat",
+        "times",
+        "while",
+        "for",
+        "each",
+        "in",
+        "from",
+        "break",
+        "continue",
+        "and",
+        "or",
+        "not",
+        "is",
+        "give",
+        "back",
+        "with",
+        "as",
+        "a",
+        "an",
+        "constant",
+        "variable",
+        "add",
+        "remove",
+        "last",
+        "item",
+        "copy",
+        "of",
+        "function",
+        "call",
+        "the",
+        "taking",
+        "giving",
+        "view",
+        "import",
+        "export",
+        "end",
+        "read",
+        "write",
+        "make",
+        "rename",
+        "warn",
+        "stop",
+        "turn",
+        "on",
+        "off",
+        "run",
+        "at",
+        "less",
+        "than",
+        "more",
+        "least",
+        "most",
+        "equal",
+        "length",
+        "part",
+        "letter",
+        "all",
+        "line",
+        "input",
+        "file",
+        "directory",
+        "exists",
+        "environment",
+        "argument",
+        "arguments",
+        "connect",
+        "listen",
+        "accept",
+        "send",
+        "close",
+        "raw",
+        "terminal",
+        "key",
+        "command",
+    ],
+    types: &[
+        "number", "numbers", "text", "truth", "value", "values", "list", "lists", "function",
+        "view", "empty",
+    ],
+    constants: &["true", "false"],
+    line_comment: &["#"],
+    block_comment: None,
+    string_delims: &["\""],
     triple_strings: &[],
     attribute_prefix: None,
     string_escapes: true,
@@ -1062,6 +1167,24 @@ mod tests {
         assert_eq!(LanguageId::TextWrite.def().extensions, &["tw"]);
         assert!(LanguageId::TextWrite.def().keywords.contains(&"repeat"));
         assert!(LanguageId::TextWrite.def().line_comment.contains(&"#"));
+    }
+
+    #[test]
+    fn detects_rusk() {
+        assert_eq!(LanguageId::from_path("main.rk"), LanguageId::Rusk);
+        assert_eq!(LanguageId::from_path("/tmp/demo.RK"), LanguageId::Rusk);
+        assert_eq!(LanguageId::from_name("rusk"), LanguageId::Rusk);
+        assert_eq!(LanguageId::from_name("rk"), LanguageId::Rusk);
+        assert_eq!(LanguageId::Rusk.name(), "Rusk");
+        assert_eq!(LanguageId::Rusk.lsp_id(), Some("rusk"));
+        assert_eq!(LanguageId::Rusk.def().extensions, &["rk"]);
+        assert!(LanguageId::Rusk.def().keywords.contains(&"say"));
+        assert!(LanguageId::Rusk.def().types.contains(&"number"));
+        assert!(LanguageId::Rusk.def().constants.contains(&"true"));
+        assert_eq!(LanguageId::Rusk.def().line_comment, &["#"]);
+        assert_eq!(LanguageId::Rusk.def().block_comment, None);
+        assert_eq!(LanguageId::Rusk.def().string_delims, &["\""]);
+        assert!(LanguageId::Rusk.def().lsp_servers.is_empty());
     }
 
     #[test]

@@ -1,0 +1,33 @@
+# gojo — a built-in Fast Text theme inspired by Gojo Satoru.
+name = "gojo"
+dark = true
+
+[ui]
+background = "#10131c"
+foreground = "#e8ecf8"
+gutter = "#5b6785"
+gutter_active = "#cfe7ff"
+cursor_line = "#182033"
+selection = "#24314f"
+status_bg = "#141927"
+status_fg = "#e8ecf8"
+status_accent = "#7dd3fc"
+prompt_bg = "#182033"
+tab_active = "#a78bfa"
+tab_inactive = "#5b6785"
+error = "#ff6b81"
+warning = "#f6c177"
+
+[syntax]
+plain = "#e8ecf8"
+keyword = "#b794f4"
+type = "#7dd3fc"
+function = "#67e8f9"
+string = "#9ae6b4"
+number = "#f7a8d8"
+comment = "#6b7899"
+operator = "#8bd5ff"
+punctuation = "#b7c3da"
+constant = "#c4b5fd"
+attribute = "#7dd3fc"
+variable = "#f2f6ff"
