@@ -4,6 +4,17 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-21
+
+### Fixed
+
+- **Command palette keybinding**: Ctrl+Shift+P now reliably opens the command
+  palette in the TUI, including terminals that report uppercase `P`, while
+  Ctrl+P continues to open the file finder.
+- **Paste/clipboard in TUI**: added bracketed paste handling and system
+  clipboard integration (`arboard`) so copy/cut/paste work with external text,
+  not just the editor's internal register.
+
 ## [0.7.0] - 2026-11-21
 
 ### Added

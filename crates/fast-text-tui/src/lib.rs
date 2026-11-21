@@ -27,7 +27,8 @@ use fast_text_plugin::CursorStyle;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::SetCursorStyle;
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -308,7 +309,12 @@ pub fn run_cli_with_layout(
     // Set up the terminal.
     enable_raw_mode()?;
     let mut out = stdout();
-    execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        out,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
 
@@ -320,7 +326,8 @@ pub fn run_cli_with_layout(
         terminal.backend_mut(),
         SetCursorStyle::DefaultUserShape,
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 
@@ -364,6 +371,9 @@ fn event_loop(
                     if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
                         app.handle_key(key);
                     }
+                }
+                Event::Paste(text) => {
+                    app.paste_text(&text);
                 }
                 Event::Mouse(mouse) => {
                     app.handle_mouse(mouse);

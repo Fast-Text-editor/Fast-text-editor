@@ -41,3 +41,4 @@ serde_json.workspace = true
 unicode-width.workspace = true
 portable-pty = "0.9"
 vte = "0.15"
+arboard = "3"

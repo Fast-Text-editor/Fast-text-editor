@@ -3829,6 +3829,7 @@ impl App {
     fn copy(&mut self) {
         let text = self.editor().doc.selected_text();
         if !text.is_empty() {
+            system_clipboard_set(&text);
             self.clipboard = text;
             self.set_message("Copied");
         }
@@ -3837,6 +3838,7 @@ impl App {
     fn cut(&mut self) {
         let text = self.editor().doc.selected_text();
         if !text.is_empty() {
+            system_clipboard_set(&text);
             self.clipboard = text;
             self.editor_mut().doc.delete_selection();
             self.set_message("Cut");
@@ -3844,11 +3846,26 @@ impl App {
     }
 
     fn paste(&mut self) {
-        if self.clipboard.is_empty() {
+        let clip = system_clipboard_get()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.clipboard.clone());
+        if clip.is_empty() {
             return;
         }
-        let clip = self.clipboard.clone();
+        self.clipboard = clip.clone();
         self.editor_mut().doc.insert_str(&clip);
+    }
+
+    /// Inserts externally pasted text (bracketed paste / system clipboard).
+    pub fn paste_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(input) = prompt_input_mut(&mut self.prompt) {
+            input.push_str(text);
+            return;
+        }
+        self.editor_mut().doc.insert_str(text);
     }
 
     // --- Editing ergonomics ------------------------------------------------
@@ -4574,8 +4591,14 @@ impl App {
                     self.editor_mut().doc.select_all();
                     return true;
                 }
-                KeyCode::Char('p') => {
-                    self.open_file_finder();
+                KeyCode::Char('p') | KeyCode::Char('P') => {
+                    if shift {
+                        self.prompt = Prompt::Command {
+                            input: String::new(),
+                        };
+                    } else {
+                        self.open_file_finder();
+                    }
                     return true;
                 }
                 KeyCode::Char('e') => {
@@ -4941,11 +4964,11 @@ impl App {
         }
     }
 
-    /// Copies the active selection without touching the clipboard traits of the
-    /// host terminal (the editor keeps its own yank register).
+    /// Copies the active selection into the yank register and system clipboard.
     fn vim_copy_selection(&mut self) {
         let (start, end) = self.editor().doc.selection_range();
         let text = self.editor().doc.buffer().slice(start, end);
+        system_clipboard_set(&text);
         self.clipboard = text;
     }
 
@@ -4964,7 +4987,9 @@ impl App {
 
     fn vim_yank_lines(&mut self) {
         let (start, end) = self.current_line_range();
-        self.clipboard = self.editor().doc.buffer().slice(start, end);
+        let text = self.editor().doc.buffer().slice(start, end);
+        system_clipboard_set(&text);
+        self.clipboard = text;
         self.set_message("Yanked line");
     }
 
@@ -5023,6 +5048,17 @@ fn plural(n: usize) -> &'static str {
         ""
     } else {
         "s"
+    }
+}
+
+fn system_clipboard_get() -> Option<String> {
+    let mut cb = arboard::Clipboard::new().ok()?;
+    cb.get_text().ok()
+}
+
+fn system_clipboard_set(text: &str) {
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        let _ = cb.set_text(text.to_string());
     }
 }
 
