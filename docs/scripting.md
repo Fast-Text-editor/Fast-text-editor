@@ -56,7 +56,7 @@ fn hello_selection() {
 command_with_desc('Hello: selection', 'Greet the selected text', 'hello_selection')
 ```
 
-Press `Ctrl+Shift+P`, type *Hello* and hit `Enter`. The greeting appears in the
+Press `Ctrl+Shift+C`, type *Hello* and hit `Enter`. The greeting appears in the
 status bar. Nothing was inserted into the buffer, so this script could not be
 simpler — and it already shows the three moving parts:
 
@@ -251,7 +251,7 @@ versions replace them so script feedback is always visible.
 
 | Function | Effect |
 | --- | --- |
-| `command(title, fn_name)` | Register a zero-argument function in `Ctrl+Shift+P` |
+| `command(title, fn_name)` | Register a zero-argument function in `Ctrl+Shift+C` |
 | `command_with_desc(title, description, fn_name)` | The same, with palette help text |
 | `bind(key, title)` | Bind a `KeySpec` string such as `'alt+p'` to a registered command |
 

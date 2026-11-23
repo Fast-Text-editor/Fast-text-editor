@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "fast-text-core"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "fuzzy-matcher",
  "ignore",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "fast-text-gui"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "eframe",
  "egui",
@@ -1378,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "fast-text-lsp"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1386,18 +1386,18 @@ dependencies = [
 
 [[package]]
 name = "fast-text-plugin"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "rhai",
 ]
 
 [[package]]
 name = "fast-text-syntax"
-version = "0.7.1"
+version = "0.7.2"
 
 [[package]]
 name = "fast-text-textwrite"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "fast-text-plugin",
  "textwrite",
@@ -1405,11 +1405,11 @@ dependencies = [
 
 [[package]]
 name = "fast-text-theme"
-version = "0.7.1"
+version = "0.7.2"
 
 [[package]]
 name = "fast-text-tui"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "arboard",
  "crossterm",
@@ -1430,11 +1430,11 @@ dependencies = [
 
 [[package]]
 name = "fast-text-update"
-version = "0.7.1"
+version = "0.7.2"
 
 [[package]]
 name = "fast-text-wasm"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "fast-text-core",
  "fast-text-plugin",
@@ -4382,7 +4382,7 @@ dependencies = [
 
 [[package]]
 name = "textwrite"
-version = "0.7.1"
+version = "0.7.2"
 
 [[package]]
 name = "thin-vec"

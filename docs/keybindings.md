@@ -15,7 +15,7 @@ Fast Text uses one shared keymap across the terminal, desktop, and web frontends
 | `Ctrl+Q` | Quit | `Ctrl+H` | Replace all |
 | `Ctrl+G` | Go to line | `Ctrl+T` | Toggle theme |
 | `Ctrl+L` | Language picker | `Ctrl+P` | Fuzzy file finder |
-| `Ctrl+Shift+P` | Command palette | `Alt+:` | `:` command bar |
+| `Ctrl+Shift+C` | Command palette | `Alt+:` | `:` command bar |
 | `Ctrl+Space` | Complete | `F5` | Hover info |
 | `F12` | Go to definition | `Alt+H` | Help |
 | `Esc` | Collapse selection | `Alt+M` | Plugin manager |

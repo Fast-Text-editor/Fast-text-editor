@@ -14,7 +14,7 @@ use fast_text_plugin::{CursorStyle, KeyName, KeySpec};
 pub const TEMPLATE: &str = r#"# Fast Text configuration
 #
 # Every setting is optional; delete a line to fall back to the default.
-# Restart, or run "Reload config" from the Ctrl+Shift+P palette, to apply changes.
+# Restart, or run "Reload config" from the Ctrl+Shift+C palette, to apply changes.
 
 [editor]
 # bar | block | underline
@@ -50,7 +50,7 @@ macos   = "default"
 # Custom keybindings: "key" = "command".
 #
 # The command is either a built-in id (listed below) or any command from the
-# Ctrl+Shift+P palette, including plugin commands. A bare letter with no modifier is
+# Ctrl+Shift+C palette, including plugin commands. A bare letter with no modifier is
 # refused, because it would stop you typing that letter.
 #
 # Built-in ids:

@@ -89,7 +89,7 @@ ARGS:
 KEYS:
     Alt+H                 In-editor help, listing every key
     Ctrl+P                Fuzzy file finder
-    Ctrl+Shift+P          Command palette (including plugin commands)
+    Ctrl+Shift+C          Command palette (including plugin commands)
     Alt+M                 Plugin manager
 ";
 

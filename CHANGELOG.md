@@ -4,11 +4,26 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-11-23
+
+### Changed
+
+- **Command palette keybinding**: the default command palette shortcut is now
+  `Ctrl+Shift+C` (was `Ctrl+Shift+P`), with `Ctrl+P` kept for the fuzzy file
+  finder.
+
+### Fixed
+
+- **Buffer/pane display mismatch**: opening a file, creating a new buffer, or
+  switching tabs now updates the focused pane so the displayed content matches
+  the selected file/tab instead of showing stale content from the previous
+  buffer.
+
 ## [0.7.1] - 2026-11-21
 
 ### Fixed
 
-- **Command palette keybinding**: Ctrl+Shift+P now reliably opens the command
+- **Command palette keybinding**: Ctrl+Shift+C now reliably opens the command
   palette in the TUI, including terminals that report uppercase `P`, while
   Ctrl+P continues to open the file finder.
 - **Paste/clipboard in TUI**: added bracketed paste handling and system
@@ -95,7 +110,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **One shared keymap** (`fast-text-plugin::keymap`): the terminal, desktop and
   web frontends resolve keys through the same `EditorCommand` table, with `Cmd`
   / `Super` translated to `Ctrl` on macOS. `Ctrl+P` opens a fuzzy file finder,
-  `Ctrl+Shift+P` the command palette, `F3` / `Shift+F3` find next / previous,
+  `Ctrl+Shift+C` the command palette, `F3` / `Shift+F3` find next / previous,
   and `Alt+T` cycles themes.
 - **Persistent undo**: `fast-text-core` serialises up to 200 transactions per
   absolute path into the cache directory (FNV-1a keyed) and writes them
@@ -163,7 +178,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Ctrl` + arrows no longer override word motion in a single-pane layout; they
   only move pane focus when a split is present.
 - The help overlay and welcome buffer now distinguish `Ctrl+P` (fuzzy file
-  finder) from `Ctrl+Shift+P` (command palette), and document the `:` command
+  finder) from `Ctrl+Shift+C` (command palette), and document the `:` command
   bar and Vim toggle.
 - Closing a pane collapses its split and restores a single buffer cleanly;
   removing a leaf from a layout shifts later editor indices.

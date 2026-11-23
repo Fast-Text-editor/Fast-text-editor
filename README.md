@@ -116,7 +116,7 @@ fast-text/
 ### Terminal, editing, and workflows
 - **Embedded PTY terminal** (`Alt+C`) with ANSI, scrollback, and full-screen program support.
 - **Nested split panes** (`ft -O ...`), tabs, mouse editing, multi-cursor, macros, find-in-files.
-- **Fuzzy file finder** (`Ctrl+P`) and **command palette** (`Ctrl+Shift+P`).
+- **Fuzzy file finder** (`Ctrl+P`) and **command palette** (`Ctrl+Shift+C`).
 
 ### Plugins, themes, and scripting
 - **26 first-party plugins** installable from the plugin manager (`Alt+M`).
@@ -129,7 +129,7 @@ See: [Keybindings](docs/keybindings.md) Â· [Plugins & themes](docs/plugins.md) Â
 
 | Key | Action | Key | Action |
 | --- | --- | --- | --- |
-| `Ctrl+Shift+P` | Command palette | `Ctrl+P` | Fuzzy file finder |
+| `Ctrl+Shift+C` | Command palette | `Ctrl+P` | Fuzzy file finder |
 | `Alt+C` | Terminal panel | `Alt+V` | Toggle Vim layer |
 | `Alt+M` | Plugin manager | `Alt+R` | Run TextWrite automation |
 | `Ctrl+D` | Select next occurrence | `Ctrl+S` | Save |

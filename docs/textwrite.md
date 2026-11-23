@@ -50,7 +50,7 @@ tw eval '1 + 2 * 3'                     # evaluate expression
 
 Inside Fast Text, TextWrite is wired through `fast-text-textwrite`, which implements the TextWrite [`Host`] hook and turns script calls into `EditorAction`s.
 
-- `.tw` files in `plugins/` load at startup and appear in `Ctrl+Shift+P`.
+- `.tw` files in `plugins/` load at startup and appear in `Ctrl+Shift+C`.
 - `Ctrl+E` evaluates a TextWrite snippet against the current buffer.
 - `Alt+R` runs a `.tw` automation file against the live editor.
 

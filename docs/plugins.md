@@ -9,7 +9,7 @@ Drop `.rhai` or `.tw` files into:
 - `~/.config/fast-text/plugins/` (user plugins)
 - `plugins/` in your working directory
 
-User directory wins on name clashes. `Ctrl+Shift+P` lists commands from loaded scripts.
+User directory wins on name clashes. `Ctrl+Shift+C` lists commands from loaded scripts.
 
 ## Plugin manager
 

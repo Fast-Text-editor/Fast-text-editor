@@ -1005,7 +1005,7 @@ impl App {
         }
     }
 
-    /// The command palette overlay (`Ctrl+Shift+P`).
+    /// The command palette overlay (`Ctrl+Shift+C`).
     fn command_palette_window(&mut self, ctx: &egui::Context) {
         if !self.show_palette {
             return;
@@ -1117,7 +1117,7 @@ impl App {
                         self.open_finder();
                         ui.close_menu();
                     }
-                    if ui.button("Command Palette… (Ctrl+Shift+P)").clicked() {
+                    if ui.button("Command Palette… (Ctrl+Shift+C)").clicked() {
                         self.open_command_palette();
                         ui.close_menu();
                     }
@@ -1131,7 +1131,7 @@ impl App {
                     ui.separator();
                     ui.label(format!("Fast Text v{VERSION}"));
                     ui.label("Ctrl+P  go to file");
-                    ui.label("Ctrl+Shift+P  command palette");
+                    ui.label("Ctrl+Shift+C  command palette");
                     ui.label("Alt+T  next theme");
                 });
 

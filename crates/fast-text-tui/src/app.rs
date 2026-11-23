@@ -208,7 +208,7 @@ pub enum Prompt {
     InstallPlugin {
         input: String,
     },
-    /// Fuzzy workspace file search (`Ctrl+Shift+P`).
+    /// Fuzzy workspace file search (`Ctrl+Shift+C`).
     FileFinder {
         input: String,
         selected: usize,
@@ -535,6 +535,18 @@ impl PaneLayout {
                 second.shift_after(removed);
             }
             Self::Empty => {}
+        }
+    }
+
+    /// Replaces every leaf showing `old` with `new`.
+    pub fn replace(&mut self, old: usize, new: usize) {
+        match self {
+            Self::Leaf(index) if *index == old => *index = new,
+            Self::Split { first, second, .. } => {
+                first.replace(old, new);
+                second.replace(old, new);
+            }
+            Self::Leaf(_) | Self::Empty => {}
         }
     }
 }
@@ -1010,7 +1022,7 @@ impl App {
                     "//\n",
                     "// Alt+H help   Ctrl+S save\n",
                     "// Ctrl+O open  Ctrl+Q quit\n",
-                    "// Ctrl+P files Ctrl+Shift+P\n",
+                    "// Ctrl+P files Ctrl+Shift+C\n",
                     "// Ctrl+L lang  Ctrl+T theme\n",
                     "// Alt+R run    Alt+C term\n",
                     "//\n",
@@ -3232,8 +3244,14 @@ impl App {
     // --- Buffer management -------------------------------------------------
 
     fn new_buffer(&mut self) {
+        let old = self.active;
         self.editors.push(Editor::from_text("", LanguageId::Plain));
         self.active = self.editors.len() - 1;
+        if self.panes.contains(old) {
+            self.panes.replace(old, self.active);
+        } else {
+            self.panes = PaneLayout::Leaf(self.active);
+        }
         self.set_message("New buffer");
     }
 
@@ -3340,14 +3358,24 @@ impl App {
             .iter()
             .position(|e| e.doc.path() == Some(path.as_path()))
         {
+            let old = self.active;
             self.active = idx;
+            if !self.panes.contains(idx) {
+                self.panes.replace(old, idx);
+            }
             self.run_buffer_hooks("on_buffer_open");
             return;
         }
         match Editor::open_or_new(path.clone()) {
             Ok(e) => {
+                let old = self.active;
                 self.editors.push(e);
                 self.active = self.editors.len() - 1;
+                if self.panes.contains(old) {
+                    self.panes.replace(old, self.active);
+                } else {
+                    self.panes = PaneLayout::Leaf(self.active);
+                }
                 if path.exists() {
                     self.set_message(format!("Opened {}", path.display()));
                 } else {
@@ -3494,10 +3522,27 @@ impl App {
 
     // --- Tabs --------------------------------------------------------------
 
+    /// Shows `idx` in the focused pane, replacing the current pane leaf when needed.
+    fn show_editor(&mut self, idx: usize) {
+        if idx >= self.editors.len() {
+            return;
+        }
+        let old = self.active;
+        self.active = idx;
+        if !self.panes.contains(idx) {
+            if self.panes.contains(old) {
+                self.panes.replace(old, idx);
+            } else {
+                self.panes = PaneLayout::Leaf(idx);
+            }
+        }
+    }
+
     /// Switches to the next open tab.
     fn next_tab(&mut self) {
         if self.editors.len() > 1 {
-            self.active = (self.active + 1) % self.editors.len();
+            let idx = (self.active + 1) % self.editors.len();
+            self.show_editor(idx);
         }
     }
 
@@ -3505,15 +3550,14 @@ impl App {
     fn prev_tab(&mut self) {
         let count = self.editors.len();
         if count > 1 {
-            self.active = (self.active + count - 1) % count;
+            let idx = (self.active + count - 1) % count;
+            self.show_editor(idx);
         }
     }
 
     /// Switches to the tab at `index`, if it exists.
     fn activate_tab(&mut self, index: usize) {
-        if index < self.editors.len() {
-            self.active = index;
-        }
+        self.show_editor(index);
     }
 
     /// Closes the tab at `index`, if it exists.
@@ -4485,7 +4529,7 @@ impl App {
             self.prompt = Prompt::SaveAs { input };
             return true;
         }
-        if ctrl && shift && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
+        if ctrl && shift && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C')) {
             self.prompt = Prompt::Command {
                 input: String::new(),
             };
@@ -4592,13 +4636,7 @@ impl App {
                     return true;
                 }
                 KeyCode::Char('p') | KeyCode::Char('P') => {
-                    if shift {
-                        self.prompt = Prompt::Command {
-                            input: String::new(),
-                        };
-                    } else {
-                        self.open_file_finder();
-                    }
+                    self.open_file_finder();
                     return true;
                 }
                 KeyCode::Char('e') => {
@@ -4638,8 +4676,14 @@ impl App {
                     };
                     return true;
                 }
-                KeyCode::Char('c') => {
-                    self.copy();
+                KeyCode::Char('c') | KeyCode::Char('C') => {
+                    if shift {
+                        self.prompt = Prompt::Command {
+                            input: String::new(),
+                        };
+                    } else {
+                        self.copy();
+                    }
                     return true;
                 }
                 KeyCode::Char('x') => {
@@ -5412,7 +5456,7 @@ mod tests {
         add_demo_plugin(&mut app);
         clear_and_type(&mut app, "");
         app.handle_key(KeyEvent::new(
-            KeyCode::Char('P'),
+            KeyCode::Char('C'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         ));
         assert!(matches!(app.prompt, Prompt::Command { .. }));
@@ -6345,7 +6389,7 @@ mod tests {
 
     #[test]
     fn a_user_binding_beats_the_built_in_one() {
-        // Ctrl+Shift+P normally opens the palette; the config steals it.
+        // Ctrl+Shift+C normally opens the palette; the config steals it.
         let mut app = app_with("[keys]\n\"ctrl+p\" = \"toggle_sidebar\"\n");
         assert!(!app.sidebar.visible());
         app.handle_key(ctrl('p'));

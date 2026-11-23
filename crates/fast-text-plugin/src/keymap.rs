@@ -150,6 +150,7 @@ pub fn default_bindings() -> Vec<(KeySpec, EditorCommand)> {
         (cs('z'), Redo),
         (c('y'), Redo),
         (c('a'), SelectAll),
+        (cs('c'), CommandPalette),
         (c('c'), Copy),
         (c('x'), Cut),
         (c('v'), Paste),
@@ -158,7 +159,6 @@ pub fn default_bindings() -> Vec<(KeySpec, EditorCommand)> {
         (shift_key(KeyName::F(3)), FindPrevious),
         (c('h'), Replace),
         (c('g'), GotoLine),
-        (cs('p'), CommandPalette),
         (c('p'), FileFinder),
         (c('l'), LanguagePicker),
         (c('b'), ToggleSidebar),
@@ -229,7 +229,7 @@ mod tests {
     fn important_commands_are_bound() {
         let finder = KeySpec::new(KeyName::Char('p'), true, false, false);
         assert_eq!(command_for(finder), Some(EditorCommand::FileFinder));
-        let palette = KeySpec::new(KeyName::Char('p'), true, false, true);
+        let palette = KeySpec::new(KeyName::Char('c'), true, false, true);
         assert_eq!(command_for(palette), Some(EditorCommand::CommandPalette));
         assert_eq!(
             command_for(KeySpec::parse("ctrl+s").unwrap()),

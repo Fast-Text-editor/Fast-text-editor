@@ -645,7 +645,7 @@ mod tests {
         assert!(json.contains("\"title\":\"Save\""), "{json}");
         assert_eq!(command_for_key("Ctrl+P").as_deref(), Some("file_finder"));
         assert_eq!(
-            command_title_for_key("Ctrl+Shift+P").as_deref(),
+            command_title_for_key("Ctrl+Shift+C").as_deref(),
             Some("Command Palette…")
         );
         assert!(command_for_key("Ctrl+Nonsense").is_none());

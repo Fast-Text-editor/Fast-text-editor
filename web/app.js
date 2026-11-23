@@ -421,7 +421,7 @@ function updateStatus() {
   updatePosition();
 }
 
-/** A tiny command palette over the shared keymap (Ctrl+Shift+P). */
+/** A tiny command palette over the shared keymap (Ctrl+Shift+C). */
 function showPalette() {
   const overlay = $("palette");
   const input = $("palette-input");

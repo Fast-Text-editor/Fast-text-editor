@@ -359,7 +359,7 @@ fn draw_completion(app: &App, frame: &mut Frame, content: Rect) {
     );
 }
 
-/// Renders the list of matching commands above the minibuffer for `Ctrl+Shift+P`.
+/// Renders the list of matching commands above the minibuffer for `Ctrl+Shift+C`.
 fn draw_command_palette(app: &App, frame: &mut Frame, prompt_area: Rect) {
     let Prompt::Command { input } = &app.prompt else {
         return;
@@ -1173,7 +1173,7 @@ fn draw_help(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(" Ctrl+L  Language      Ctrl+A  Select all"),
         Line::from(" Ctrl+X/C/V  Cut/Copy/Paste"),
         Line::from(" Ctrl+P  Fuzzy file finder"),
-        Line::from(" Ctrl+Shift+P  Command palette"),
+        Line::from(" Ctrl+Shift+C  Command palette"),
         Line::from(" Ctrl+E  Eval TextWrite"),
         Line::from(" Ctrl+Space  Complete   F5  Hover   F12  Definition"),
         Line::from(" Ctrl+T  Toggle theme  Esc     Clear selection"),
