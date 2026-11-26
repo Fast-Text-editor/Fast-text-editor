@@ -303,6 +303,11 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "Focus next pane",
     "Focus previous pane",
     "Restore default status line",
+    "Git: Refresh",
+    "Git: Status",
+    "Git: Diff file",
+    "Toggle focus mode",
+    "Toggle spell check",
 ];
 
 /// The optional Vim editing layer.
@@ -858,6 +863,12 @@ pub struct App {
     pub config_path: Option<PathBuf>,
     /// The generic list overlay (symbols, code actions, find in files).
     pub picker: Picker,
+    /// Git branch/diff markers for the current workspace.
+    pub git: crate::git::GitInfo,
+    /// Hides nonessential panels for distraction-free writing.
+    pub focus_mode: bool,
+    /// Underlines typos in prose/comments.
+    pub spell_check: bool,
     /// What a chosen picker row means.
     picker_action: PickerAction,
     /// Which picker flavour is open.
@@ -1060,7 +1071,7 @@ impl App {
                 .collect(),
             None => Vec::new(),
         };
-        Self {
+        let mut app = Self {
             editors,
             active: 0,
             should_quit: false,
@@ -1121,6 +1132,9 @@ impl App {
             find_query: String::new(),
             find_case_sensitive: false,
             find_results: Vec::new(),
+            git: crate::git::GitInfo::default(),
+            focus_mode: false,
+            spell_check: false,
             recording: None,
             last_macro: None,
             macros: HashMap::new(),
@@ -1134,7 +1148,9 @@ impl App {
             lsp_install: LspInstallState::Idle,
             lsp_install_rx: None,
             lsp_install_tx: None,
-        }
+        };
+        app.refresh_git();
+        app
     }
 
     /// Toggles the console panel.
@@ -1671,6 +1687,11 @@ impl App {
         actions.extend(self.scripts.run_hook(name, &ctx));
         self.apply_actions(actions);
         self.in_hook = false;
+        if matches!(name, "on_buffer_open" | "on_buffer_save") {
+            self.refresh_git_for_active();
+            let root = self.sidebar.root().to_path_buf();
+            self.git.refresh_branch(&root);
+        }
     }
 
     /// Runs a Rhai plugin or TextWrite script command by title.
@@ -1802,6 +1823,33 @@ impl App {
             }
             "Check for updates" => {
                 self.begin_update_check(true);
+                true
+            }
+            "Git: Refresh" => {
+                self.refresh_git();
+                let branch = self
+                    .git
+                    .branch
+                    .as_deref()
+                    .unwrap_or("not a git repo")
+                    .to_string();
+                self.set_message(format!("Git refreshed ({branch})"));
+                true
+            }
+            "Git: Status" => {
+                self.show_git_status();
+                true
+            }
+            "Git: Diff file" => {
+                self.show_git_diff_file();
+                true
+            }
+            "Toggle focus mode" => {
+                self.toggle_focus_mode();
+                true
+            }
+            "Toggle spell check" => {
+                self.toggle_spell_check();
                 true
             }
             _ => {
@@ -2003,6 +2051,20 @@ impl App {
                 self.custom_status = None;
                 self.set_message("Status line restored");
             }
+            "git_refresh" | "refresh_git" => {
+                self.refresh_git();
+                let branch = self
+                    .git
+                    .branch
+                    .as_deref()
+                    .unwrap_or("not a git repo")
+                    .to_string();
+                self.set_message(format!("Git refreshed ({branch})"));
+            }
+            "git_status" => self.show_git_status(),
+            "git_diff_file" | "git_diff" => self.show_git_diff_file(),
+            "toggle_focus_mode" | "focus_mode" => self.toggle_focus_mode(),
+            "toggle_spell_check" | "spell_check" => self.toggle_spell_check(),
             "command_line" | "command_bar" => {
                 self.prompt = Prompt::CommandLine {
                     input: String::new(),
@@ -2974,6 +3036,108 @@ impl App {
         self.refresh_find_in_files();
     }
 
+    /// Refreshes git branch and active file diff marks.
+    pub fn refresh_git(&mut self) {
+        let cwd = self.sidebar.root().to_path_buf();
+        self.git.refresh_branch(&cwd);
+        self.refresh_git_for_active();
+    }
+
+    /// Refreshes git diff marks for the active file.
+    pub fn refresh_git_for_active(&mut self) {
+        if let Some(path) = self.editor().doc.path().map(PathBuf::from) {
+            self.git.refresh_file(&path);
+        }
+    }
+
+    fn show_git_status(&mut self) {
+        let root = self.sidebar.root().to_path_buf();
+        match std::process::Command::new("git")
+            .args(["status", "--short", "--branch"])
+            .current_dir(&root)
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                let lines: Vec<String> = if text.trim().is_empty() {
+                    vec!["(clean)".to_string()]
+                } else {
+                    text.lines().map(|l| l.to_string()).collect()
+                };
+                self.console_visible = true;
+                self.console_output.push("── git status ──".to_string());
+                self.console_output.extend(lines);
+                self.set_message("Git status");
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                self.set_error(if err.is_empty() {
+                    "git status failed".to_string()
+                } else {
+                    err
+                });
+            }
+            Err(e) => self.set_error(format!("git status failed: {e}")),
+        }
+    }
+
+    fn show_git_diff_file(&mut self) {
+        let Some(path) = self.editor().doc.path().map(PathBuf::from) else {
+            self.set_error("Buffer has no file");
+            return;
+        };
+        let cwd = path.parent().unwrap_or(self.sidebar.root()).to_path_buf();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        match std::process::Command::new("git")
+            .args(["diff", "--no-color", "--", &name])
+            .current_dir(&cwd)
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                self.console_visible = true;
+                self.console_output
+                    .push(format!("── git diff -- {} ──", name));
+                if text.trim().is_empty() {
+                    self.console_output.push("(no changes)".to_string());
+                } else {
+                    self.console_output
+                        .extend(text.lines().map(|l| l.to_string()));
+                }
+                self.set_message("Git diff");
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                self.set_error(if err.is_empty() {
+                    "git diff failed".to_string()
+                } else {
+                    err
+                });
+            }
+            Err(e) => self.set_error(format!("git diff failed: {e}")),
+        }
+    }
+
+    fn toggle_focus_mode(&mut self) {
+        self.focus_mode = !self.focus_mode;
+        if self.focus_mode {
+            self.sidebar.hide();
+            self.console_visible = false;
+            self.set_message("Focus mode on");
+        } else {
+            self.set_message("Focus mode off");
+        }
+    }
+
+    fn toggle_spell_check(&mut self) {
+        self.spell_check = !self.spell_check;
+        let state = if self.spell_check { "on" } else { "off" };
+        self.set_message(format!("Spell check {state}"));
+    }
+
     /// Re-runs the search and refreshes the open picker.
     fn refresh_find_in_files(&mut self) {
         let root = self.sidebar.root().to_path_buf();
@@ -3536,6 +3700,7 @@ impl App {
                 self.panes = PaneLayout::Leaf(idx);
             }
         }
+        self.refresh_git_for_active();
     }
 
     /// Switches to the next open tab.

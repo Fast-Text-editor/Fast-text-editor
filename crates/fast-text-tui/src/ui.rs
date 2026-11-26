@@ -37,7 +37,9 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
             .fg(app.theme.foreground),
     );
 
-    let show_tabs = app.editors.len() > 1;
+    let show_tabs = app.editors.len() > 1 && !app.focus_mode;
+    let show_console = app.console_visible && !app.focus_mode;
+    let show_sidebar = app.sidebar.visible() && !app.focus_mode;
     let prompt_active = app.prompt.is_active();
 
     let mut constraints = Vec::new();
@@ -46,7 +48,7 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Min(1));
-    if app.console_visible {
+    if show_console {
         constraints.push(Constraint::Length(10)); // console panel
     }
     constraints.push(Constraint::Length(1));
@@ -69,7 +71,7 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     let content = chunks[idx];
     idx += 1;
     let mut console_area: Option<Rect> = None;
-    if app.console_visible {
+    if show_console {
         let area = chunks[idx];
         idx += 1;
         draw_console(app, frame, area);
@@ -81,7 +83,7 @@ pub fn draw(app: &mut App, frame: &mut Frame) {
     app.console_area = console_area;
 
     // The folder explorer, when visible, claims a column on the left.
-    let editor_area = if app.sidebar.visible() {
+    let editor_area = if show_sidebar {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -781,6 +783,12 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect, focused: bool) {
 
         // Gutter: diagnostic marker + line number, right-aligned.
         let diag = app.diagnostic_for_line(line_idx);
+        let git_mark = app
+            .editor()
+            .doc
+            .path()
+            .and_then(|p| app.git.marks_for(p))
+            .and_then(|m| m.get(&line_idx).copied());
         let (marker, marker_style) = match &diag {
             Some(d) => {
                 let ch = match d.severity() {
@@ -789,18 +797,31 @@ fn draw_content(app: &mut App, frame: &mut Frame, area: Rect, focused: bool) {
                     Severity::Information | Severity::Hint => "i",
                 };
                 (
-                    ch,
+                    ch.to_string(),
                     Style::default()
                         .fg(severity_color(app, d.severity()))
                         .bg(row_bg)
                         .add_modifier(Modifier::BOLD),
                 )
             }
-            None => (" ", Style::default().bg(row_bg)),
+            None => match git_mark {
+                Some(m) => {
+                    let color = match m {
+                        crate::git::GitMark::Added => app.theme.status_accent,
+                        crate::git::GitMark::Modified => app.theme.warning,
+                        crate::git::GitMark::Deleted => app.theme.error,
+                    };
+                    (
+                        m.as_char().to_string(),
+                        Style::default().fg(color).bg(row_bg),
+                    )
+                }
+                None => (" ".to_string(), Style::default().bg(row_bg)),
+            },
         };
         frame
             .buffer_mut()
-            .set_string(area.x, y, marker, marker_style);
+            .set_string(area.x, y, &marker, marker_style);
 
         let num = format!("{:>width$}", line_idx + 1, width = (gw - 2) as usize);
         let num_style = if is_cursor_line {
@@ -949,6 +970,30 @@ fn render_line_text(
 ) {
     let theme = &app.theme;
     let chars: Vec<char> = text.chars().collect();
+    let spell_miss: Vec<bool> = {
+        let lang = app.editor().language;
+        if app.spell_check
+            && (lang == fast_text_syntax::LanguageId::Markdown
+                || lang == fast_text_syntax::LanguageId::Plain)
+        {
+            let ranges = crate::spell::misspellings_in_line(text);
+            if ranges.is_empty() {
+                Vec::new()
+            } else {
+                let mut flags = vec![false; chars.len()];
+                for (ci, (bi, _)) in text.char_indices().enumerate() {
+                    if ranges.iter().any(|&(s, e)| bi >= s && bi < e) {
+                        if let Some(f) = flags.get_mut(ci) {
+                            *f = true;
+                        }
+                    }
+                }
+                flags
+            }
+        } else {
+            Vec::new()
+        }
+    };
     let mut col = 0usize;
 
     for (i, &ch) in chars.iter().enumerate() {
@@ -1006,6 +1051,9 @@ fn render_line_text(
             if selected {
                 style = style.bg(theme.selection);
             }
+            if spell_miss.get(i).copied().unwrap_or(false) {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
             if let Some(cell) = buf.cell_mut(Position2::xy(text_x + screen as u16, y)) {
                 cell.set_char(ch);
                 cell.set_style(style);
@@ -1034,7 +1082,19 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
         String::new()
     };
 
-    let left = format!(" {}{}  v{}", ed.title(), dirty, env!("CARGO_PKG_VERSION"));
+    let branch = app
+        .git
+        .branch
+        .as_deref()
+        .map(|b| format!("  ⎇ {b}"))
+        .unwrap_or_default();
+    let left = format!(
+        " {}{}  v{}{}",
+        ed.title(),
+        dirty,
+        env!("CARGO_PKG_VERSION"),
+        branch
+    );
     let lang = format!("{} ", ed.language.name());
     let mode = app.vim.mode.label();
     let mode = if mode.is_empty() {
@@ -1073,9 +1133,11 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
                 .diagnostic_for_line(pos.line)
                 .map(|d| format!("  ·  {}", d.summary()))
                 .unwrap_or_default();
+            let focus = if app.focus_mode { "  ·  FOCUS" } else { "" };
+            let spell = if app.spell_check { "  ·  SPELL" } else { "" };
             (
                 format!(
-                    "{diag_part}{line_part}  ·  Ln {}, Col {}{}  ·  {} ",
+                    "{diag_part}{line_part}{focus}{spell}  ·  Ln {}, Col {}{}  ·  {} ",
                     pos.line + 1,
                     pos.col + 1,
                     sel,
