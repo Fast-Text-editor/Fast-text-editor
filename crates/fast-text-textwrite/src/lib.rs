@@ -339,14 +339,19 @@ impl ScriptHost {
         self.reload();
     }
 
-    /// Loads every `.tw` file in a directory, sorted by name.
+    /// Loads every `.tw` or `.ft` script file in a directory, sorted by name.
     pub fn load_dir(&mut self, dir: &std::path::Path) {
         self.base_dir = Some(dir.to_path_buf());
         let mut entries: Vec<std::path::PathBuf> = match std::fs::read_dir(dir) {
             Ok(rd) => rd
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("tw"))
+                .filter(|p| {
+                    matches!(
+                        p.extension().and_then(|e| e.to_str()),
+                        Some("tw") | Some("ft")
+                    )
+                })
                 .collect(),
             Err(_) => return,
         };
@@ -537,16 +542,16 @@ impl ScriptHost {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
 
-    /// Compiles a `.tw` file: parses it and resolves (recursively) every module
-    /// it imports, without running anything. The `.tw` extension is optional.
+    /// Compiles a `.tw`/`.ft` file: parses it and resolves (recursively) every module
+    /// it imports, without running anything. The extension is optional.
     pub fn compile_file(&mut self, path: &str) -> textwrite::Result<()> {
         let (source, dir) = read_script(path)?;
         self.interp.set_module_base(dir);
         self.interp.compile(&source)
     }
 
-    /// Compiles and runs a `.tw` file against a snapshot of the editor state,
-    /// returning the actions it queued. The `.tw` extension is optional.
+    /// Compiles and runs a `.tw`/`.ft` file against a snapshot of the editor state,
+    /// returning the actions it queued. The extension is optional.
     pub fn run_file(
         &mut self,
         path: &str,
@@ -561,13 +566,15 @@ impl ScriptHost {
     }
 }
 
-/// Reads a script from disk, defaulting the `.tw` extension and reporting the
+/// Reads a script from disk, defaulting the `.ft`/`.tw` extension and reporting the
 /// directory it lives in (used as the base for its relative imports).
 fn read_script(path: &str) -> textwrite::Result<(String, PathBuf)> {
     let trimmed = path.trim();
     let mut path = PathBuf::from(trimmed);
     if !path.exists() && path.extension().is_none() {
-        path = path.with_extension("tw");
+        let ft = path.with_extension("ft");
+        let tw = path.with_extension("tw");
+        path = if ft.exists() { ft } else { tw };
     }
     let source = std::fs::read_to_string(&path).map_err(|e| {
         textwrite::Error::runtime(

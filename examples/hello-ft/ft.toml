@@ -1,0 +1,15 @@
+[extension]
+id = "hello-ft"
+name = "Hello FT"
+version = "0.1.0"
+description = "Example .ft framework extension for Fast Text"
+author = "Fast Text"
+main = "main.ft"
+
+[hooks]
+on_startup = true
+
+[[commands]]
+name = "hello_ft"
+title = "Hello FT: Greet"
+description = "Insert a greeting from a .ft extension"

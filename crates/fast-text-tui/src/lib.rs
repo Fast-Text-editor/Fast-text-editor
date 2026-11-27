@@ -30,11 +30,13 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::SetCursorStyle;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
+    LeaveAlternateScreen,
 };
 use ratatui::Terminal;
 
@@ -317,13 +319,47 @@ pub fn run_cli_with_layout(
         EnableMouseCapture,
         EnableBracketedPaste
     )?;
+    let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhanced {
+        let _ = execute!(
+            out,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
+    // Restore terminal on panic so the shell isn't left in raw mode.
+    let original_hook = std::sync::Arc::new(std::panic::take_hook());
+    let panic_hook = original_hook.clone();
+    std::panic::set_hook(Box::new(move |panic| {
+        let _ = disable_raw_mode();
+        let mut out = stdout();
+        if keyboard_enhanced {
+            let _ = execute!(out, PopKeyboardEnhancementFlags);
+        }
+        let _ = execute!(
+            out,
+            ratatui::crossterm::cursor::Show,
+            SetCursorStyle::DefaultUserShape,
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste
+        );
+        panic_hook(panic);
+    }));
+
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
 
     let result = event_loop(&mut terminal, files, config, split);
 
     // Restore the terminal even if the loop errored.
+    let _ = std::panic::take_hook();
+    if let Ok(hook) = std::sync::Arc::try_unwrap(original_hook) {
+        std::panic::set_hook(hook);
+    }
     disable_raw_mode()?;
+    if keyboard_enhanced {
+        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     execute!(
         terminal.backend_mut(),
         SetCursorStyle::DefaultUserShape,
@@ -368,7 +404,7 @@ fn event_loop(
         }
 
         if event::poll(app.poll_timeout())? {
-            match event::read()? {
+            let handle_event = |ev: Event, app: &mut App| match ev {
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
                         app.handle_key(key);
@@ -382,6 +418,10 @@ fn event_loop(
                 }
                 Event::Resize(width, height) => app.set_terminal_size(width, height),
                 _ => {}
+            };
+            handle_event(event::read()?, &mut app);
+            while event::poll(std::time::Duration::ZERO)? {
+                handle_event(event::read()?, &mut app);
             }
         }
     }

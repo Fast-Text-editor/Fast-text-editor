@@ -108,7 +108,7 @@ impl Default for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self {
+        let mut s = Self {
             globals: Env::root(),
             out: Box::new(std::io::stdout()),
             host: None,
@@ -118,7 +118,12 @@ impl Interpreter {
             module_base: None,
             module_cache: HashMap::new(),
             importing: Vec::new(),
-        }
+        };
+        let ft_src = include_str!("ft.tw");
+        s.modules.insert("ft".to_string(), ft_src.to_string());
+        s.modules.insert(".ft".to_string(), ft_src.to_string());
+        s.modules.insert("fast-text/ft".to_string(), ft_src.to_string());
+        s
     }
 
     pub fn with_output(out: Box<dyn Write>) -> Self {

@@ -1,0 +1,15 @@
+[package]
+name = "fast-text-ft"
+description = "The .ft extension framework for Fast Text: manifests, hooks, and extension runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"

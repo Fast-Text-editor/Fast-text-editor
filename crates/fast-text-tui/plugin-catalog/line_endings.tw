@@ -1,0 +1,32 @@
+# Line ending tools for Fast Text — a TextWrite plugin.
+#
+# Convert between LF and CRLF line endings in selection or document.
+
+fn le_source() {
+    if has_selection { return selected_text }
+    return document_text
+}
+
+fn le_apply(out) {
+    if has_selection {
+        delete_selection()
+        insert(out)
+    } else {
+        select_all()
+        delete_selection()
+        insert(out)
+    }
+}
+
+fn to_lf() {
+    let s = le_source()
+    le_apply(replace(s, "\r\n", "\n"))
+}
+command_with_desc("Line endings: Convert to LF", "Convert CRLF line endings to LF", "to_lf")
+
+fn to_crlf() {
+    let s = le_source()
+    let lf = replace(s, "\r\n", "\n")
+    le_apply(replace(lf, "\n", "\r\n"))
+}
+command_with_desc("Line endings: Convert to CRLF", "Convert line endings to CRLF", "to_crlf")

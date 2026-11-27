@@ -1,0 +1,114 @@
+// .ft framework - Fast Text extension framework for TextWrite.
+// Import with: import "ft"  (or import ".ft")
+//
+// Provides helpers for building editor extensions: commands, hooks,
+// keybindings, and common text utilities.
+
+let ft_version = "0.8.0"
+let ft_name = ".ft"
+
+// --- Extension metadata ---
+fn ft_info() {
+    return {
+        name: ft_name,
+        version: ft_version,
+        description: "Fast Text .ft extension framework"
+    }
+}
+
+// --- Command helpers ---
+// Register a command with title, description, and handler function name.
+fn ft_command(title, description, handler) {
+    command_with_desc(title, description, handler)
+}
+
+// Register a simple command (title used as handler lookup by host).
+fn ft_cmd(title, handler) {
+    command_with_desc(title, "", handler)
+}
+
+// --- Keybinding helpers ---
+fn ft_bind(key, command_title) {
+    bind(key, command_title)
+}
+
+// --- Hook helpers ---
+fn ft_on_open(handler) { on_buffer_open(handler) }
+fn ft_on_save(handler) { on_buffer_save(handler) }
+fn ft_on_startup(handler) { on_startup(handler) }
+
+// --- Editor helpers ---
+fn ft_insert(text) { insert(text) }
+fn ft_message(text) { message(text) }
+fn ft_set_status(text) { set_status(text) }
+fn ft_get_text() { return document_text }
+fn ft_get_selection() { return selected_text }
+fn ft_has_selection() { return has_selection }
+
+// --- Text utilities ---
+fn ft_repeat(text, n) {
+    let out = ""
+    let i = 0
+    while i < n {
+        out = out + text
+        i = i + 1
+    }
+    return out
+}
+
+fn ft_pad_left(text, width, ch) {
+    let s = "" + text
+    while len(s) < width {
+        s = ch + s
+    }
+    return s
+}
+
+fn ft_pad_right(text, width, ch) {
+    let s = "" + text
+    while len(s) < width {
+        s = s + ch
+    }
+    return s
+}
+
+fn ft_is_blank(line) {
+    return trim(line) == ""
+}
+
+fn ft_lines(text) {
+    return split(text, "\n")
+}
+
+fn ft_unlines(lines) {
+    return join(lines, "\n")
+}
+
+// Wrap selected text with prefix/suffix, or insert wrappers.
+fn ft_wrap(prefix, suffix) {
+    if has_selection {
+        replace_selection(prefix + selected_text + suffix)
+    } else {
+        insert(prefix + suffix)
+    }
+}
+
+// Replace selection or whole document via handler(name) -> string.
+fn ft_transform_selection(handler) {
+    if has_selection {
+        replace_selection(handler(selected_text))
+    } else {
+        let result = handler(document_text)
+        select_all()
+        replace_selection(result)
+    }
+}
+
+// --- Extension scaffold helper (returns manifest template) ---
+fn ft_manifest_template(name, id) {
+    return "[extension]\nid = \"" + id + "\"\nname = \"" + name + "\"\nversion = \"0.1.0\"\ndescription = \"\"\nauthor = \"\"\nmain = \"main.ft\"\n\n[hooks]\non_startup = false\n"
+}
+
+fn ft_main_template() {
+    return "// .ft extension\nimport \"ft\"\n\nfn hello() {{\n    ft_message(\"Hello from .ft\")\n}}\n\nft_command(\"FT: Hello\", \"Say hello\", \"hello\")\n"
+}

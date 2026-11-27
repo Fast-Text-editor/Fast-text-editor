@@ -1,0 +1,43 @@
+# UUID and ID tools for Fast Text — a TextWrite plugin.
+#
+# Inserts random hex identifiers useful for placeholders, IDs, and testing.
+
+fn hex_digit(n) {
+    let digits = "0123456789abcdef"
+    return slice(digits, n, n + 1)
+}
+
+fn rand_hex(n) {
+    # Simple pseudo-random hex using runtime values.
+    let out = ""
+    let seed = len(document_text) * 1103515245 + 12345
+    let i = 0
+    while i < n {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        let v = seed % 16
+        if v < 0 { v = 0 - v }
+        out = out + hex_digit(v)
+        i = i + 1
+    }
+    return out
+}
+
+fn insert_uuid_v4() {
+    let a = rand_hex(8)
+    let b = rand_hex(4)
+    let c = "4" + rand_hex(3)
+    let d = hex_digit(8 + (len(document_text) % 4)) + rand_hex(3)
+    let e = rand_hex(12)
+    insert(a + "-" + b + "-" + c + "-" + d + "-" + e)
+}
+command_with_desc("ID: Insert UUID-like", "Insert a random UUID-like identifier", "insert_uuid_v4")
+
+fn insert_hex_id() {
+    insert(rand_hex(16))
+}
+command_with_desc("ID: Insert hex ID", "Insert a random 16-char hex identifier", "insert_hex_id")
+
+fn insert_short_id() {
+    insert(rand_hex(8))
+}
+command_with_desc("ID: Insert short ID", "Insert a random 8-char hex identifier", "insert_short_id")

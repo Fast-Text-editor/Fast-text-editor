@@ -35,6 +35,8 @@ const DEFAULT_VIEW_HEIGHT: usize = 20;
 pub enum PluginKind {
     Rhai,
     TextWrite,
+    /// A `.ft` extension package directory (manifest + scripts).
+    FtPackage,
 }
 
 impl PluginKind {
@@ -43,6 +45,7 @@ impl PluginKind {
         match self {
             PluginKind::Rhai => "Rhai",
             PluginKind::TextWrite => "TextWrite",
+            PluginKind::FtPackage => "FT Framework",
         }
     }
 
@@ -51,6 +54,7 @@ impl PluginKind {
         match self {
             PluginKind::Rhai => "R",
             PluginKind::TextWrite => "T",
+            PluginKind::FtPackage => "F",
         }
     }
 
@@ -58,7 +62,7 @@ impl PluginKind {
     fn from_path(path: &Path) -> Option<PluginKind> {
         match path.extension().and_then(|e| e.to_str()) {
             Some("rhai") => Some(PluginKind::Rhai),
-            Some("tw") => Some(PluginKind::TextWrite),
+            Some("tw") | Some("ft") => Some(PluginKind::TextWrite),
             _ => None,
         }
     }
@@ -223,10 +227,12 @@ impl PluginManager {
             let Ok(read) = fs::read_dir(dir) else {
                 continue;
             };
-            let mut paths: Vec<PathBuf> = read
-                .filter_map(Result::ok)
-                .map(|e| e.path())
-                .filter(|p| PluginKind::from_path(p).is_some())
+            let all_paths: Vec<PathBuf> = read.filter_map(Result::ok).map(|e| e.path()).collect();
+
+            let mut paths: Vec<PathBuf> = all_paths
+                .iter()
+                .filter(|p| p.is_file() && PluginKind::from_path(p).is_some())
+                .cloned()
                 .collect();
             paths.sort();
             for path in paths {
@@ -241,6 +247,40 @@ impl PluginManager {
                     continue;
                 }
                 let mut entry = inspect(path, kind, name);
+                entry.enabled = !self.disabled.contains(&entry.name);
+                entries.push(entry);
+            }
+
+            // Discover .ft framework extension packages (directories with ft.toml or scripts).
+            let mut pkg_dirs: Vec<PathBuf> = all_paths
+                .iter()
+                .filter(|p| p.is_dir())
+                .filter(|p| {
+                    p.join(fast_text_ft::MANIFEST_FILE).exists()
+                        || std::fs::read_dir(p)
+                            .ok()
+                            .map(|rd| {
+                                rd.filter_map(|e| e.ok()).any(|e| {
+                                    matches!(
+                                        e.path().extension().and_then(|x| x.to_str()),
+                                        Some("ft") | Some("tw")
+                                    )
+                                })
+                            })
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+            pkg_dirs.sort();
+            for path in pkg_dirs {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                let mut entry = inspect(path, PluginKind::FtPackage, name);
                 entry.enabled = !self.disabled.contains(&entry.name);
                 entries.push(entry);
             }
@@ -430,16 +470,31 @@ impl PluginManager {
         let mut plugins = PluginHost::new();
         let mut scripts = ScriptHost::new();
         for entry in self.entries.iter().filter(|e| e.enabled) {
-            let Ok(source) = fs::read_to_string(&entry.path) else {
-                continue;
-            };
             match entry.kind {
-                PluginKind::Rhai => plugins.add_plugin(&entry.name, &source),
+                PluginKind::Rhai => {
+                    let Ok(source) = fs::read_to_string(&entry.path) else {
+                        continue;
+                    };
+                    plugins.add_plugin(&entry.name, &source);
+                }
                 PluginKind::TextWrite => {
+                    let Ok(source) = fs::read_to_string(&entry.path) else {
+                        continue;
+                    };
                     if let Some(dir) = entry.path.parent() {
                         scripts.set_module_dir(dir);
                     }
                     scripts.add_script(&entry.name, &source);
+                }
+                PluginKind::FtPackage => {
+                    if let Ok(ext) = fast_text_ft::FtExtension::load_dir(&entry.path) {
+                        if let Some(main) = &ext.main_script {
+                            if let Ok(source) = fs::read_to_string(main) {
+                                scripts.set_module_dir(&ext.root);
+                                scripts.add_script(&ext.display_name(), &source);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -617,6 +672,40 @@ fn inspect(path: PathBuf, kind: PluginKind, name: String) -> PluginEntry {
         keybindings: Vec::new(),
         error: None,
     };
+
+    if kind == PluginKind::FtPackage {
+        match fast_text_ft::FtExtension::load_dir(&entry.path) {
+            Ok(ext) => {
+                entry.description = if ext.manifest.extension.description.is_empty() {
+                    if ext.manifest.extension.version.is_empty() {
+                        ".ft extension".to_string()
+                    } else {
+                        format!(".ft extension v{}", ext.manifest.extension.version)
+                    }
+                } else {
+                    ext.manifest.extension.description.clone()
+                };
+                if let Some(main) = &ext.main_script {
+                    match fs::read_to_string(main) {
+                        Ok(source) => {
+                            let mut host = ScriptHost::new();
+                            host.set_module_dir(&ext.root);
+                            host.add_script(&entry.name, &source);
+                            entry.commands = host.commands();
+                            entry.keybindings = host.keybindings();
+                            entry.error = host.errors.into_iter().next();
+                        }
+                        Err(e) => entry.error = Some(format!("cannot read main script: {e}")),
+                    }
+                } else {
+                    entry.error = Some("no main .ft/.tw script found".to_string());
+                }
+            }
+            Err(e) => entry.error = Some(e),
+        }
+        return entry;
+    }
+
     let Ok(source) = fs::read_to_string(&entry.path) else {
         entry.error = Some("cannot read file".to_string());
         return entry;
@@ -640,6 +729,7 @@ fn inspect(path: PathBuf, kind: PluginKind, name: String) -> PluginEntry {
             entry.keybindings = host.keybindings();
             entry.error = host.errors.into_iter().next();
         }
+        PluginKind::FtPackage => {}
     }
     entry
 }

@@ -11,6 +11,7 @@ members = [
     "crates/fast-text-tui",
     "crates/fast-text-textwrite",
     "crates/fast-text-update",
+    "crates/fast-text-ft",
     "crates/textwrite",
 ]
 
@@ -37,6 +38,7 @@ fast-text-theme = { version = "0.8.0", path = "crates/fast-text-theme" }
 fast-text-lsp = { version = "0.8.0", path = "crates/fast-text-lsp" }
 fast-text-textwrite = { version = "0.8.0", path = "crates/fast-text-textwrite" }
 fast-text-update = { version = "0.8.0", path = "crates/fast-text-update" }
+fast-text-ft = { version = "0.8.0", path = "crates/fast-text-ft" }
 textwrite = { version = "0.8.0", path = "crates/textwrite" }
 
 ropey = "1.6"

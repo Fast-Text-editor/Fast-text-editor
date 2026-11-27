@@ -1,0 +1,24 @@
+# Unicode and symbol tools for Fast Text — a TextWrite plugin.
+#
+# Insert common symbols and normalize simple punctuation.
+
+fn insert_arrow_right() { insert("→") }
+command_with_desc("Symbol: Arrow right", "Insert →", "insert_arrow_right")
+
+fn insert_arrow_left() { insert("←") }
+command_with_desc("Symbol: Arrow left", "Insert ←", "insert_arrow_left")
+
+fn insert_checkmark() { insert("✓") }
+command_with_desc("Symbol: Checkmark", "Insert ✓", "insert_checkmark")
+
+fn insert_cross() { insert("✗") }
+command_with_desc("Symbol: Cross", "Insert ✗", "insert_cross")
+
+fn insert_bullet() { insert("•") }
+command_with_desc("Symbol: Bullet", "Insert •", "insert_bullet")
+
+fn insert_ellipsis() { insert("…") }
+command_with_desc("Symbol: Ellipsis", "Insert …", "insert_ellipsis")
+
+fn insert_em_dash() { insert("—") }
+command_with_desc("Symbol: Em dash", "Insert —", "insert_em_dash")

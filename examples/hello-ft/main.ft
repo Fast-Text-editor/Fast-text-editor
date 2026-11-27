@@ -1,0 +1,13 @@
+// Hello FT - example .ft framework extension for Fast Text.
+// .ft extensions can register commands, keybindings, and hooks.
+
+fn hello_ft_greet() {
+    insert("Hello from the .ft framework! 🚀\n")
+}
+
+fn on_startup() {
+    // Runs when the extension is loaded.
+    message("Hello FT extension loaded")
+}
+
+command_with_desc("Hello FT: Greet", "Insert a greeting from a .ft extension", "hello_ft_greet")

@@ -1,0 +1,60 @@
+# HTML helpers for Fast Text — a TextWrite plugin.
+#
+# Encode/decode basic HTML entities and wrap selections in tags.
+
+fn html_source() {
+    if has_selection { return selected_text }
+    return document_text
+}
+
+fn html_apply(out) {
+    if has_selection {
+        delete_selection()
+        insert(out)
+    } else {
+        select_all()
+        delete_selection()
+        insert(out)
+    }
+}
+
+fn html_encode() {
+    let s = html_source()
+    s = replace(s, "&", "&amp;")
+    s = replace(s, "<", "&lt;")
+    s = replace(s, ">", "&gt;")
+    s = replace(s, "\"", "&quot;")
+    s = replace(s, "'", "&#39;")
+    html_apply(s)
+}
+command_with_desc("HTML: Encode entities", "Encode &, <, >, quotes as HTML entities", "html_encode")
+
+fn html_decode() {
+    let s = html_source()
+    s = replace(s, "&lt;", "<")
+    s = replace(s, "&gt;", ">")
+    s = replace(s, "&quot;", "\"")
+    s = replace(s, "&#39;", "'")
+    s = replace(s, "&amp;", "&")
+    html_apply(s)
+}
+command_with_desc("HTML: Decode entities", "Decode common HTML entities", "html_decode")
+
+fn html_tag(tag) {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("<" + tag + ">" + s + "</" + tag + ">")
+    } else {
+        insert("<" + tag + "></" + tag + ">")
+    }
+}
+
+fn html_bold() { html_tag("strong") }
+command_with_desc("HTML: Bold tag", "Wrap selection in <strong>", "html_bold")
+
+fn html_italic() { html_tag("em") }
+command_with_desc("HTML: Italic tag", "Wrap selection in <em>", "html_italic")
+
+fn html_code() { html_tag("code") }
+command_with_desc("HTML: Code tag", "Wrap selection in <code>", "html_code")

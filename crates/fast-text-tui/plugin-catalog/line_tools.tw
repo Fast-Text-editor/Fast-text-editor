@@ -1,0 +1,73 @@
+# Extra line tools for Fast Text — a TextWrite plugin.
+#
+# Duplicate, join, split, and shuffle-like utilities for selected lines.
+
+fn lt_source() {
+    if has_selection {
+        return selected_text
+    }
+    return document_text
+}
+
+fn lt_apply(out) {
+    if has_selection {
+        delete_selection()
+        insert(out)
+    } else {
+        select_all()
+        delete_selection()
+        insert(out)
+    }
+}
+
+fn duplicate_selection() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert(s + s)
+    } else {
+        let s = document_text
+        select_all()
+        delete_selection()
+        insert(s + "\n" + s)
+    }
+}
+command_with_desc("Lines: Duplicate selection/document", "Duplicate the selection, or the whole document when nothing is selected", "duplicate_selection")
+
+fn join_lines_comma() {
+    let s = lt_source()
+    let parts = split(s, "\n")
+    let out = []
+    for p in parts {
+        let t = trim(p)
+        if t is not "" {
+            push(out, t)
+        }
+    }
+    lt_apply(join(out, ", "))
+}
+command_with_desc("Lines: Join with comma", "Join non-empty lines with commas", "join_lines_comma")
+
+fn split_commas_to_lines() {
+    let s = lt_source()
+    let parts = split(s, ",")
+    let out = []
+    for p in parts {
+        push(out, trim(p))
+    }
+    lt_apply(join(out, "\n"))
+}
+command_with_desc("Lines: Split commas to lines", "Split comma-separated values onto separate lines", "split_commas_to_lines")
+
+fn remove_empty_lines() {
+    let s = lt_source()
+    let parts = split(s, "\n")
+    let out = []
+    for p in parts {
+        if trim(p) is not "" {
+            push(out, p)
+        }
+    }
+    lt_apply(join(out, "\n"))
+}
+command_with_desc("Lines: Remove empty lines", "Remove blank lines from the selection or document", "remove_empty_lines")

@@ -1,0 +1,33 @@
+# Frontmatter and document templates for Fast Text — a TextWrite plugin.
+#
+# Insert common document headers and frontmatter blocks.
+
+fn insert_yaml_frontmatter() {
+    let t = "---\n"
+    t = t + "title: \"\"\n"
+    t = t + "date: \"\"\n"
+    t = t + "tags: []\n"
+    t = t + "---\n\n"
+    insert(t)
+}
+command_with_desc("Template: YAML frontmatter", "Insert a YAML frontmatter block", "insert_yaml_frontmatter")
+
+fn insert_toml_frontmatter() {
+    let t = "+++\n"
+    t = t + "title = \"\"\n"
+    t = t + "date = \"\"\n"
+    t = t + "tags = []\n"
+    t = t + "+++\n\n"
+    insert(t)
+}
+command_with_desc("Template: TOML frontmatter", "Insert a TOML frontmatter block", "insert_toml_frontmatter")
+
+fn insert_markdown_note() {
+    let t = "# Title\n\n"
+    t = t + "## Notes\n\n"
+    t = t + "- \n\n"
+    t = t + "## TODO\n\n"
+    t = t + "- [ ] \n"
+    insert(t)
+}
+command_with_desc("Template: Markdown note", "Insert a simple Markdown note template", "insert_markdown_note")

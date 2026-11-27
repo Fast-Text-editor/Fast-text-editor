@@ -1,0 +1,50 @@
+# Whitespace tools for Fast Text — a TextWrite plugin.
+#
+# Trim, normalize, and visualize whitespace in selections.
+
+fn ws_source() {
+    if has_selection { return selected_text }
+    return document_text
+}
+
+fn ws_apply(out) {
+    if has_selection {
+        delete_selection()
+        insert(out)
+    } else {
+        select_all()
+        delete_selection()
+        insert(out)
+    }
+}
+
+fn trim_trailing() {
+    let lines = split(ws_source(), "\n")
+    let out = []
+    for line in lines {
+        let s = line
+        while len(s) > 0 {
+            let last = slice(s, len(s) - 1, len(s))
+            if last is " " or last is "\t" or last is "\r" {
+                s = slice(s, 0, len(s) - 1)
+            } else {
+                break
+            }
+        }
+        push(out, s)
+    }
+    ws_apply(join(out, "\n"))
+}
+command_with_desc("Whitespace: Trim trailing", "Trim trailing whitespace from each line", "trim_trailing")
+
+fn tabs_to_spaces() {
+    let s = ws_source()
+    ws_apply(replace(s, "\t", "    "))
+}
+command_with_desc("Whitespace: Tabs to spaces", "Convert tabs to 4 spaces", "tabs_to_spaces")
+
+fn spaces_to_tabs() {
+    let s = ws_source()
+    ws_apply(replace(s, "    ", "\t"))
+}
+command_with_desc("Whitespace: Spaces to tabs", "Convert 4 spaces to tabs", "spaces_to_tabs")

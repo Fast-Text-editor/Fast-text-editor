@@ -4694,7 +4694,13 @@ impl App {
             self.prompt = Prompt::SaveAs { input };
             return true;
         }
-        if ctrl && shift && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C')) {
+        if ctrl
+            && shift
+            && matches!(
+                key.code,
+                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('p') | KeyCode::Char('P')
+            )
+        {
             self.prompt = Prompt::Command {
                 input: String::new(),
             };

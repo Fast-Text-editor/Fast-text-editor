@@ -1,0 +1,53 @@
+# Markdown link helpers for Fast Text — a TextWrite plugin.
+#
+# Quickly create links, images, and reference-style links.
+
+fn md_link() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("[" + s + "](url)")
+    } else {
+        insert("[text](url)")
+    }
+}
+command_with_desc("Markdown: Insert link", "Insert a Markdown link around the selection", "md_link")
+
+fn md_image() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("![" + s + "](image-url)")
+    } else {
+        insert("![alt](image-url)")
+    }
+}
+command_with_desc("Markdown: Insert image", "Insert a Markdown image", "md_image")
+
+fn md_code_block() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("```\n" + s + "\n```")
+    } else {
+        insert("```\n\n```")
+    }
+}
+command_with_desc("Markdown: Code block", "Wrap selection in a fenced code block", "md_code_block")
+
+fn md_quote() {
+    let s = ""
+    if has_selection { s = selected_text } else { s = "" }
+    let lines = split(s, "\n")
+    let out = []
+    for line in lines {
+        push(out, "> " + line)
+    }
+    if has_selection {
+        delete_selection()
+        insert(join(out, "\n"))
+    } else {
+        insert("> ")
+    }
+}
+command_with_desc("Markdown: Quote lines", "Prefix selected lines with >", "md_quote")

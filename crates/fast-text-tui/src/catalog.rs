@@ -254,6 +254,78 @@ pub const CATALOG: &[CatalogPlugin] = &[
                       or outdent selected lines",
         source: include_str!("../plugin-catalog/checklist.tw"),
     },
+    CatalogPlugin {
+        file_name: "line_tools.tw",
+        title: "Line tools",
+        description: "Duplicate, join, split, and clean lines in the selection or document",
+        source: include_str!("../plugin-catalog/line_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "surround.tw",
+        title: "Surround",
+        description: "Wrap selections in parentheses, brackets, braces, quotes, and backticks",
+        source: include_str!("../plugin-catalog/surround.tw"),
+    },
+    CatalogPlugin {
+        file_name: "uuid_tools.tw",
+        title: "ID tools",
+        description: "Insert UUID-like and random hex identifiers for testing and placeholders",
+        source: include_str!("../plugin-catalog/uuid_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "line_endings.tw",
+        title: "Line endings",
+        description: "Convert line endings between LF and CRLF",
+        source: include_str!("../plugin-catalog/line_endings.tw"),
+    },
+    CatalogPlugin {
+        file_name: "html_tools.tw",
+        title: "HTML tools",
+        description: "Encode/decode HTML entities and wrap selections in common HTML tags",
+        source: include_str!("../plugin-catalog/html_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "case_tools.tw",
+        title: "Case tools",
+        description: "Sentence case and toggle-case transforms for selection or document",
+        source: include_str!("../plugin-catalog/case_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "markdown_links.tw",
+        title: "Markdown links",
+        description: "Insert Markdown links, images, fenced code blocks, and quoted lines",
+        source: include_str!("../plugin-catalog/markdown_links.tw"),
+    },
+    CatalogPlugin {
+        file_name: "sort_tools.tw",
+        title: "Sort tools",
+        description: "Sort, dedupe, and reverse selected lines",
+        source: include_str!("../plugin-catalog/sort_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "whitespace_tools.tw",
+        title: "Whitespace tools",
+        description: "Trim trailing whitespace and convert tabs/spaces",
+        source: include_str!("../plugin-catalog/whitespace_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "frontmatter.tw",
+        title: "Frontmatter templates",
+        description: "Insert YAML/TOML frontmatter and Markdown note templates",
+        source: include_str!("../plugin-catalog/frontmatter.tw"),
+    },
+    CatalogPlugin {
+        file_name: "unicode_tools.tw",
+        title: "Unicode symbols",
+        description: "Insert common Unicode symbols like arrows, checkmarks, and em dashes",
+        source: include_str!("../plugin-catalog/unicode_tools.tw"),
+    },
+    CatalogPlugin {
+        file_name: "text_wrap.tw",
+        title: "Text wrap",
+        description: "Wrap selections in Markdown bold, italic, code, and strikethrough",
+        source: include_str!("../plugin-catalog/text_wrap.tw"),
+    },
 ];
 
 /// The catalog entry with this file name, if any.

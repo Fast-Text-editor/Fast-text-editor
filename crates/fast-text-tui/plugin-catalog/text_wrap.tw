@@ -1,0 +1,52 @@
+# Text wrapping helpers for Fast Text — a TextWrite plugin.
+#
+# Wrap selections in quotes, brackets, or custom markers.
+
+fn tw_source() {
+    if has_selection { return selected_text }
+    return ""
+}
+
+fn wrap_as_code_inline() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("`" + s + "`")
+    } else {
+        insert("``")
+    }
+}
+command_with_desc("Wrap: Inline code", "Wrap selection as inline Markdown code", "wrap_as_code_inline")
+
+fn wrap_as_bold() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("**" + s + "**")
+    } else {
+        insert("****")
+    }
+}
+command_with_desc("Wrap: Bold", "Wrap selection in Markdown bold", "wrap_as_bold")
+
+fn wrap_as_italic() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("*" + s + "*")
+    } else {
+        insert("**")
+    }
+}
+command_with_desc("Wrap: Italic", "Wrap selection in Markdown italic", "wrap_as_italic")
+
+fn wrap_as_strikethrough() {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert("~~" + s + "~~")
+    } else {
+        insert("~~~~")
+    }
+}
+command_with_desc("Wrap: Strikethrough", "Wrap selection in Markdown strikethrough", "wrap_as_strikethrough")

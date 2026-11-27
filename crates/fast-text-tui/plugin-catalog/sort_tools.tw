@@ -1,0 +1,69 @@
+# Sort and dedupe tools for Fast Text — a TextWrite plugin.
+#
+# Sort lines, deduplicate, and reverse selected text.
+
+fn st_source() {
+    if has_selection { return selected_text }
+    return document_text
+}
+
+fn st_apply(out) {
+    if has_selection {
+        delete_selection()
+        insert(out)
+    } else {
+        select_all()
+        delete_selection()
+        insert(out)
+    }
+}
+
+fn sort_lines_asc() {
+    let lines = split(st_source(), "\n")
+    let sorted = sort(lines)
+    st_apply(join(sorted, "\n"))
+}
+command_with_desc("Sort: Lines ascending", "Sort selected lines in ascending order", "sort_lines_asc")
+
+fn sort_lines_desc() {
+    let lines = split(st_source(), "\n")
+    let sorted = sort(lines)
+    let out = []
+    let i = len(sorted) - 1
+    while i >= 0 {
+        push(out, sorted[i])
+        i = i - 1
+    }
+    st_apply(join(out, "\n"))
+}
+command_with_desc("Sort: Lines descending", "Sort selected lines in descending order", "sort_lines_desc")
+
+fn dedupe_lines() {
+    let lines = split(st_source(), "\n")
+    let seen = []
+    let out = []
+    for line in lines {
+        let found = false
+        for s in seen {
+            if s is line { found = true }
+        }
+        if not found {
+            push(seen, line)
+            push(out, line)
+        }
+    }
+    st_apply(join(out, "\n"))
+}
+command_with_desc("Sort: Dedupe lines", "Remove duplicate lines while preserving order", "dedupe_lines")
+
+fn reverse_lines() {
+    let lines = split(st_source(), "\n")
+    let out = []
+    let i = len(lines) - 1
+    while i >= 0 {
+        push(out, lines[i])
+        i = i - 1
+    }
+    st_apply(join(out, "\n"))
+}
+command_with_desc("Sort: Reverse lines", "Reverse the order of selected lines", "reverse_lines")

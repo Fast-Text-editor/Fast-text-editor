@@ -1,0 +1,64 @@
+# Extra case tools for Fast Text — a TextWrite plugin.
+#
+# Sentence case, toggle case, and simple text casing helpers.
+
+fn ct_source() {
+    if has_selection { return selected_text }
+    return document_text
+}
+
+fn ct_apply(out) {
+    if has_selection {
+        delete_selection()
+        insert(out)
+    } else {
+        select_all()
+        delete_selection()
+        insert(out)
+    }
+}
+
+fn is_alpha(c) {
+    let a = lower(c)
+    return index_of("abcdefghijklmnopqrstuvwxyz", a) >= 0
+}
+
+fn sentence_case() {
+    let s = ct_source()
+    let out = ""
+    let cap = true
+    for c in chars(s) {
+        if cap and is_alpha(c) {
+            out = out + upper(c)
+            cap = false
+        } else {
+            out = out + lower(c)
+            if c is "." or c is "!" or c is "?" {
+                cap = true
+            }
+        }
+        if c is "\n" {
+            cap = true
+        }
+    }
+    ct_apply(out)
+}
+command_with_desc("Case: Sentence case", "Convert text to sentence case", "sentence_case")
+
+fn toggle_case() {
+    let s = ct_source()
+    let out = ""
+    for c in chars(s) {
+        let lo = lower(c)
+        let up = upper(c)
+        if c is lo and c is not up {
+            out = out + up
+        } else if c is up and c is not lo {
+            out = out + lo
+        } else {
+            out = out + c
+        }
+    }
+    ct_apply(out)
+}
+command_with_desc("Case: Toggle case", "Swap upper and lower case letters", "toggle_case")

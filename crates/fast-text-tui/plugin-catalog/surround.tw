@@ -1,0 +1,31 @@
+# Surround and unwrap helpers for Fast Text — a TextWrite plugin.
+#
+# Wrap selections in common delimiters or remove matching outer wrappers.
+
+fn surr_wrap(prefix, suffix) {
+    if has_selection {
+        let s = selected_text
+        delete_selection()
+        insert(prefix + s + suffix)
+    } else {
+        insert(prefix + suffix)
+    }
+}
+
+fn surround_parens() { surr_wrap("(", ")") }
+command_with_desc("Surround: Parentheses", "Wrap the selection in parentheses", "surround_parens")
+
+fn surround_brackets() { surr_wrap("[", "]") }
+command_with_desc("Surround: Brackets", "Wrap the selection in square brackets", "surround_brackets")
+
+fn surround_braces() { surr_wrap("{", "}") }
+command_with_desc("Surround: Braces", "Wrap the selection in curly braces", "surround_braces")
+
+fn surround_backticks() { surr_wrap("`", "`") }
+command_with_desc("Surround: Backticks", "Wrap the selection in backticks", "surround_backticks")
+
+fn surround_double_quotes() { surr_wrap("\"", "\"") }
+command_with_desc("Surround: Double quotes", "Wrap the selection in double quotes", "surround_double_quotes")
+
+fn surround_single_quotes() { surr_wrap("'", "'") }
+command_with_desc("Surround: Single quotes", "Wrap the selection in single quotes", "surround_single_quotes")
