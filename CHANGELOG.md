@@ -4,6 +4,20 @@ All notable changes to Fast Text are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-27
+
+### Added
+
+- **`.ft` framework library for TextWrite**: `import "ft"` (also `import ".ft"` / `import "fast-text/ft"`) loads a built-in Fast Text framework module with helpers for commands, keybindings, hooks, editor actions, text transforms, and extension templates.
+- **`fast-text-ft` crate**: new framework crate for `.ft` extension packages, including manifest parsing (`ft.toml`), package discovery, main-script resolution, and extension scaffolding.
+- **`.ft` extension package support**: the TUI plugin manager discovers and loads `.ft` extension package directories alongside `.rhai` and `.tw` scripts; `.ft` script files are supported as TextWrite-compatible scripts.
+- **12 new first-party TextWrite plugins**: `line_tools`, `surround`, `uuid_tools`, `line_endings`, `html_tools`, `case_tools`, `markdown_links`, `sort_tools`, `whitespace_tools`, `frontmatter`, `unicode_tools`, and `text_wrap`.
+
+### Changed
+
+- **TUI keyboard handling**: enables terminal keyboard enhancement flags when supported, restores terminal state on panic, and coalesces pending input events to reduce lag.
+- **Command palette fallback**: `Ctrl+Shift+P` also opens the command palette alongside `Ctrl+Shift+C`.
+
 ## [0.8.0] - 2026-11-26
 
 ### Added
