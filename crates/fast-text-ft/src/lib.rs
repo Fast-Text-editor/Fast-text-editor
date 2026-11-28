@@ -218,7 +218,7 @@ pub fn discover_extensions(dir: &Path) -> Vec<FtExtension> {
             }
         }
     }
-    out.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+    out.sort_by_key(|a| a.display_name());
     out
 }
 

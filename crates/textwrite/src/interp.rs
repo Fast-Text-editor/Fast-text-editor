@@ -122,7 +122,8 @@ impl Interpreter {
         let ft_src = include_str!("ft.tw");
         s.modules.insert("ft".to_string(), ft_src.to_string());
         s.modules.insert(".ft".to_string(), ft_src.to_string());
-        s.modules.insert("fast-text/ft".to_string(), ft_src.to_string());
+        s.modules
+            .insert("fast-text/ft".to_string(), ft_src.to_string());
         s
     }
 

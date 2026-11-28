@@ -10,7 +10,7 @@ fn hex_digit(n) {
 fn rand_hex(n) {
     # Simple pseudo-random hex using runtime values.
     let out = ""
-    let seed = len(document_text) * 1103515245 + 12345
+    let seed = (len(document_text) % 2147483) * 1000 + 12345
     let i = 0
     while i < n {
         seed = (seed * 1103515245 + 12345) % 2147483648
